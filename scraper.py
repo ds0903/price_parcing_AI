@@ -28,7 +28,7 @@ class PromScraper:
         """Open the page in Playwright and return rendered HTML."""
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=HEADLESS)
+                browser = pw.chromium.launch(channel="chrome", headless=HEADLESS)
                 context = browser.new_context(
                     user_agent=(
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

@@ -1,16 +1,14 @@
 import logging
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from config import GEMINI_API_KEY, GEMINI_MODEL
 
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 class GeminiAgent:
-    def __init__(self):
-        self.vision_model = genai.GenerativeModel(GEMINI_MODEL)
-        self.text_model = genai.GenerativeModel(GEMINI_MODEL)
 
     def identify_product_from_image(self, image_bytes: bytes) -> str:
         """Use Gemini Vision to identify a product name from a photo."""
@@ -21,8 +19,11 @@ class GeminiAgent:
             "Відповідь — лише назва товару, без пояснень."
         )
         try:
-            image_part = {"mime_type": "image/jpeg", "data": image_bytes}
-            response = self.vision_model.generate_content([prompt, image_part])
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[prompt, image_part],
+            )
             return response.text.strip()
         except Exception as e:
             logger.error("Gemini Vision error: %s", e)
@@ -53,7 +54,10 @@ class GeminiAgent:
         )
 
         try:
-            response = self.text_model.generate_content(prompt)
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
             return response.text.strip()
         except Exception as e:
             logger.error("Gemini text error: %s", e)
