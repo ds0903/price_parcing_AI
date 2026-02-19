@@ -39,8 +39,6 @@ user_tasks: dict[int, asyncio.Task] = {}
 user_context: dict[int, bool] = {}
 scheduled_tasks: dict[int, asyncio.Task] = {}
 
-MODE_LABELS = {"chat": "💬 Чат", "excel": "📊 Excel"}
-
 SEARCH_TRIGGERS = (
     "знайди", "знайдіть",
     "шукай", "шукайте",
@@ -89,14 +87,7 @@ def settings_keyboard(platform: str, output_mode: str) -> InlineKeyboardMarkup:
         )
         for p, label in [("rozetka", "🔴 Rozetka"), ("web", "🌐 Інтернет")]
     ]
-    mode_row = [
-        InlineKeyboardButton(
-            text=("✅ " if output_mode == m else "") + label,
-            callback_data=f"mode:{m}",
-        )
-        for m, label in MODE_LABELS.items()
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=[platform_row_1, platform_row_2, mode_row])
+    return InlineKeyboardMarkup(inline_keyboard=[platform_row_1, platform_row_2])
 
 
 # ------------------------------------------------------------------ #
@@ -259,17 +250,10 @@ async def _collect_excel_results(
 
 async def do_search(
     user_id: int, chat_id: int, query: str,
-    platform: str, output_mode: str, status_msg=None,
+    platform: str, output_mode: str = "excel", status_msg=None,
     filter_intent: str = "",
 ) -> None:
-    if output_mode == "excel":
-        products = await _collect_excel_results(user_id, query, platform, filter_intent)
-    else:
-        products = await asyncio.to_thread(search_manager.search, query, platform, 10)
-        if (filter_intent or user_context.get(user_id)) and products:
-            products = await asyncio.to_thread(
-                agent.filter_products_by_intent, user_id, products, query, filter_intent
-            )
+    products = await _collect_excel_results(user_id, query, platform, filter_intent)
     ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, products, platform)
 
     if status_msg:
@@ -278,19 +262,13 @@ async def do_search(
         except Exception:
             pass
 
-    if output_mode == "excel":
-        xlsx_bytes = await asyncio.to_thread(build_excel, query, platform, products, ai_analysis)
-        filename = f"price_{query[:30].replace(' ', '_')}.xlsx"
-        await bot.send_document(
-            chat_id,
-            BufferedInputFile(xlsx_bytes, filename=filename),
-            caption=f'📊 Результати: "{query}" [{PLATFORM_LABELS.get(platform, platform)}]',
-        )
-    else:
-        result = format_chat(query, platform, products, ai_analysis)
-        if len(result) > 4096:
-            result = result[:4090] + "\n..."
-        await bot.send_message(chat_id, result, disable_web_page_preview=True)
+    xlsx_bytes = await asyncio.to_thread(build_excel, query, platform, products, ai_analysis)
+    filename = f"price_{query[:30].replace(' ', '_')}.xlsx"
+    await bot.send_document(
+        chat_id,
+        BufferedInputFile(xlsx_bytes, filename=filename),
+        caption=f'📊 Результати: "{query}" [{PLATFORM_LABELS.get(platform, platform)}]',
+    )
 
     user_context[user_id] = True
 
@@ -355,11 +333,9 @@ async def cmd_start(message: Message) -> None:
 async def cmd_settings(message: Message) -> None:
     settings = await get_user_settings(message.from_user.id)
     plat = PLATFORM_LABELS.get(settings["platform"], settings["platform"])
-    mode = MODE_LABELS.get(settings["output_mode"], settings["output_mode"])
     await message.answer(
         f"⚙️ Поточні налаштування:\n"
-        f"• Платформа: *{plat}*\n"
-        f"• Формат: *{mode}*\n\n"
+        f"• Платформа: *{plat}*\n\n"
         f"Змінити:",
         reply_markup=settings_keyboard(settings["platform"], settings["output_mode"]),
         parse_mode="Markdown",
@@ -377,17 +353,6 @@ async def on_platform_select(callback: CallbackQuery) -> None:
     )
     await callback.answer(f"Платформа: {PLATFORM_LABELS.get(platform, platform)}")
 
-
-@dp.callback_query(F.data.startswith("mode:"))
-async def on_mode_select(callback: CallbackQuery) -> None:
-    user_id = callback.from_user.id
-    mode = callback.data.split(":")[1]
-    await save_user_settings(user_id, output_mode=mode)
-    settings = await get_user_settings(user_id)
-    await callback.message.edit_reply_markup(
-        reply_markup=settings_keyboard(settings["platform"], settings["output_mode"])
-    )
-    await callback.answer(f"Формат: {MODE_LABELS.get(mode, mode)}")
 
 
 @dp.message(Command("platform"))
@@ -454,10 +419,9 @@ async def cmd_schedule(message: Message) -> None:
     _start_schedule_task(user_id, chat_id, interval, query, platform, output_mode)
 
     label_p = PLATFORM_LABELS.get(platform, platform)
-    label_m = MODE_LABELS.get(output_mode, output_mode)
     await message.answer(
         f"⏰ Розклад: кожні *{interval} хв* шукатиму «{query}»\n"
-        f"Платформа: *{label_p}* | Формат: *{label_m}*\n"
+        f"Платформа: *{label_p}*\n"
         "Зупинити: /schedule stop",
         parse_mode="Markdown",
     )
