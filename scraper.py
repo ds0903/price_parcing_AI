@@ -34,13 +34,14 @@ PLATFORM_LABELS = {
 }
 
 
-def detect_platform(text: str) -> str | None:
-    """Return platform key if text contains a platform keyword, else None."""
+def detect_platforms(text: str) -> list[str]:
+    """Return list of all platform keys mentioned in text (can be several)."""
     t = text.lower()
+    found = []
     for platform, keywords in _PLATFORM_KEYWORDS.items():
         if any(re.search(rf'\b{re.escape(kw)}\b', t) for kw in keywords):
-            return platform
-    return None
+            found.append(platform)
+    return found
 
 
 def clean_query(text: str) -> str:

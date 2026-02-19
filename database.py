@@ -119,12 +119,14 @@ async def init_db() -> None:
 #  User settings CRUD  (memory cache → PostgreSQL)                    #
 # ------------------------------------------------------------------ #
 
-_DEFAULT_SETTINGS = {"platform": "prom", "output_mode": "chat"}
+_DEFAULT_SETTINGS: dict = {"platforms": ["prom"], "output_mode": "chat"}
 _settings_cache: dict[int, dict] = {}
 
 
 async def get_user_settings(user_id: int) -> dict:
-    """Return settings from cache; load from DB on first access."""
+    """Return settings from cache; load from DB on first access.
+    'platforms' is always a list[str] (e.g. ['prom', 'rozetka']).
+    """
     if user_id in _settings_cache:
         return _settings_cache[user_id]
 
@@ -134,17 +136,29 @@ async def get_user_settings(user_id: int) -> dict:
             "SELECT platform, output_mode FROM user_settings WHERE user_id = $1",
             user_id,
         )
-    settings = dict(row) if row else dict(_DEFAULT_SETTINGS)
+    if row:
+        settings = {
+            "platforms": [p for p in row["platform"].split(",") if p],
+            "output_mode": row["output_mode"],
+        }
+    else:
+        settings = {
+            "platforms": list(_DEFAULT_SETTINGS["platforms"]),
+            "output_mode": _DEFAULT_SETTINGS["output_mode"],
+        }
     _settings_cache[user_id] = settings
     return settings
 
 
 async def save_user_settings(user_id: int, **kwargs) -> None:
-    """Update one or more settings fields and persist to DB."""
+    """Update one or more settings fields and persist to DB.
+    Pass 'platforms' as list[str].
+    """
     settings = await get_user_settings(user_id)
     settings.update(kwargs)
     _settings_cache[user_id] = settings
 
+    platforms_str = ",".join(settings.get("platforms") or ["prom"])
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
@@ -156,7 +170,7 @@ async def save_user_settings(user_id: int, **kwargs) -> None:
                 output_mode = EXCLUDED.output_mode,
                 updated_at  = NOW()
             """,
-            user_id, settings["platform"], settings["output_mode"],
+            user_id, platforms_str, settings["output_mode"],
         )
 
 
