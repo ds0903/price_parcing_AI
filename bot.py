@@ -38,18 +38,25 @@ user_tasks: dict[int, asyncio.Task] = {}
 user_context: dict[int, bool] = {}
 scheduled_tasks: dict[int, asyncio.Task] = {}
 
-QUESTION_STARTERS = (
-    "яка", "який", "яке", "яких", "де", "чи", "чому", "як",
-    "скільки", "що", "коли", "хто", "навіщо", "порівняй",
-    "розкажи", "поясни", "варто", "краще",
-)
-
 MODE_LABELS = {"chat": "💬 Чат", "excel": "📊 Excel"}
 
+SEARCH_TRIGGERS = (
+    "знайди", "знайдіть",
+    "шукай", "шукайте",
+    "пошукай", "пошук",
+    "покажи", "покажіть",
+    "де купити", "хочу купити",
+    "ціна на", "ціни на",
+    "скільки коштує", "скільки коштують",
+    "починай пошук", "почни пошук",
+    "найди",
+)
 
-def is_followup(text: str) -> bool:
+
+def is_search_intent(text: str) -> bool:
+    """True лише якщо є явний запит на пошук товару."""
     t = text.lower().strip()
-    return t.endswith("?") or any(t.startswith(kw) for kw in QUESTION_STARTERS)
+    return any(kw in t for kw in SEARCH_TRIGGERS)
 
 
 # ------------------------------------------------------------------ #
@@ -307,6 +314,15 @@ async def on_mode_select(callback: CallbackQuery) -> None:
     await callback.answer(f"Формат: {MODE_LABELS.get(mode, mode)}")
 
 
+@dp.message(Command("platform"))
+async def cmd_platform(message: Message) -> None:
+    settings = await get_user_settings(message.from_user.id)
+    await message.answer(
+        "🛒 Оберіть платформу для пошуку:",
+        reply_markup=settings_keyboard(settings["platform"], settings["output_mode"]),
+    )
+
+
 @dp.message(Command("reboot"))
 async def cmd_reboot(message: Message) -> None:
     user_id = message.from_user.id
@@ -382,8 +398,12 @@ async def handle_text(message: Message) -> None:
     if not text:
         return
 
-    # Follow-up conversation
-    if user_context.get(user_id) and is_followup(text):
+    # Ignore unknown slash-commands
+    if text.startswith("/"):
+        return
+
+    # Search only when user explicitly asks; otherwise — AI chat
+    if not is_search_intent(text):
         thinking = await message.answer("💭 Думаю...")
         reply = await asyncio.to_thread(agent.follow_up, user_id, text)
         await thinking.delete()
@@ -397,10 +417,9 @@ async def handle_text(message: Message) -> None:
     if detected:
         platform = detected
         await save_user_settings(user_id, platform=platform)
-        query = clean_query(text)
     else:
         platform = settings["platform"]
-        query = text
+    query = clean_query(text)
 
     output_mode = settings["output_mode"]
     label = PLATFORM_LABELS.get(platform, platform)

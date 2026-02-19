@@ -14,8 +14,13 @@ _PLATFORM_KEYWORDS: dict[str, list[str]] = {
     "web":  ["інтернет", "internet", "гугл", "google", "скрізь", "всюди", "мережа", "всіх"],
 }
 
-# Words to strip when cleaning the query after platform detection
-_STRIP_WORDS = {"шукай", "знайди", "пошукай", "пошукуй", "на", "в", "по", "через"}
+# Words to strip when cleaning the query
+_STRIP_WORDS = {
+    "шукай", "шукайте", "знайди", "знайдіть",
+    "пошукай", "пошукуй", "покажи", "покажіть",
+    "найди", "починай", "почни", "пошук",
+    "на", "в", "по", "через",
+}
 # Also strip platform keywords themselves
 _ALL_STRIP = _STRIP_WORDS | {kw for kws in _PLATFORM_KEYWORDS.values() for kw in kws}
 
