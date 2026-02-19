@@ -232,18 +232,44 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 #  Core search function                                                #
 # ------------------------------------------------------------------ #
 
+async def _collect_excel_results(
+    user_id: int, query: str, platform: str,
+    filter_intent: str, target: int = 100, max_pages: int = 20,
+) -> list[dict]:
+    """Scrape page by page, filter each batch, accumulate until `target` results or no more pages."""
+    collected: list[dict] = []
+    should_filter = filter_intent or user_context.get(user_id)
+
+    for page in range(1, max_pages + 1):
+        raw = await asyncio.to_thread(search_manager.search_page, query, platform, page)
+        if not raw:
+            break  # no more pages
+        if should_filter:
+            batch = await asyncio.to_thread(
+                agent.filter_products_by_intent, user_id, raw, query, filter_intent
+            )
+        else:
+            batch = raw
+        collected.extend(batch)
+        if len(collected) >= target:
+            break
+
+    return collected[:target]
+
+
 async def do_search(
     user_id: int, chat_id: int, query: str,
     platform: str, output_mode: str, status_msg=None,
     filter_intent: str = "",
 ) -> None:
-    limit = 100 if output_mode == "excel" else 10
-    products = await asyncio.to_thread(search_manager.search, query, platform, limit)
-    # Strict AI filtering: run when explicit intent provided or user has conversation context
-    if (filter_intent or user_context.get(user_id)) and products:
-        products = await asyncio.to_thread(
-            agent.filter_products_by_intent, user_id, products, query, filter_intent
-        )
+    if output_mode == "excel":
+        products = await _collect_excel_results(user_id, query, platform, filter_intent)
+    else:
+        products = await asyncio.to_thread(search_manager.search, query, platform, 10)
+        if (filter_intent or user_context.get(user_id)) and products:
+            products = await asyncio.to_thread(
+                agent.filter_products_by_intent, user_id, products, query, filter_intent
+            )
     ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, products, platform)
 
     if status_msg:
@@ -514,7 +540,7 @@ async def handle_photo(message: Message) -> None:
     platform = settings["platform"]
     output_mode = settings["output_mode"]
 
-    status_msg = await message.answer("🖼 Аналізую фото за допомогою Gemini AI...")
+    status_msg = await message.answer("🖼 Аналізую фото за допомогою AI...")
 
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)

@@ -11,6 +11,10 @@ PLATFORM = "web"
 class WebScraper:
     """Search across the whole internet via DuckDuckGo — no API key required."""
 
+    def search_page(self, query: str, page: int) -> list[dict]:
+        """DuckDuckGo has no true pagination — returns all on page 1, empty otherwise."""
+        return self.search_products(query, limit=100) if page == 1 else []
+
     def search_products(self, query: str, limit: int = 10) -> list[dict]:
         search_query = f"{query} ціна купити Україна грн"
         try:

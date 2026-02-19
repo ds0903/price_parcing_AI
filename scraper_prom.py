@@ -17,24 +17,22 @@ _MAX_PAGES = 10  # safety cap
 class PromScraper:
     BASE_URL = "https://prom.ua/ua/search"
 
-    def search_products(self, query: str, limit: int = 10) -> list[dict]:
-        max_pages = min(_MAX_PAGES, math.ceil(limit / _PER_PAGE)) if limit else _MAX_PAGES
-        products: list[dict] = []
+    def search_page(self, query: str, page: int) -> list[dict]:
+        url = f"{self.BASE_URL}?search_term={quote(query)}"
+        if page > 1:
+            url += f"&page={page}"
+        html = self._fetch_html(url)
+        return (self._parse_next_data(html) or self._parse_html_cards(html)) if html else []
 
-        for page in range(1, max_pages + 1):
-            url = f"{self.BASE_URL}?search_term={quote(query)}"
-            if page > 1:
-                url += f"&page={page}"
-            html = self._fetch_html(url)
-            if not html:
-                break
-            batch = self._parse_next_data(html) or self._parse_html_cards(html)
+    def search_products(self, query: str, limit: int = 10) -> list[dict]:
+        products: list[dict] = []
+        for page in range(1, _MAX_PAGES + 1):
+            batch = self.search_page(query, page)
             if not batch:
                 break
             products.extend(batch)
             if limit and len(products) >= limit:
                 break
-
         return products[:limit] if limit else products
 
     def _fetch_html(self, url: str) -> str:

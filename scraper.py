@@ -61,3 +61,7 @@ class SearchManager:
     def search(self, query: str, platform: str = "prom", limit: int = 10) -> list[dict]:
         scraper = self._scrapers.get(platform, self._scrapers["prom"])
         return scraper.search_products(query, limit=limit)
+
+    def search_page(self, query: str, platform: str, page: int) -> list[dict]:
+        scraper = self._scrapers.get(platform, self._scrapers["prom"])
+        return scraper.search_page(query, page)
