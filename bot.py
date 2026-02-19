@@ -2,7 +2,6 @@ import asyncio
 import io
 import logging
 import math
-import re
 from datetime import datetime
 
 import openpyxl
@@ -40,74 +39,7 @@ user_tasks: dict[int, asyncio.Task] = {}
 user_context: dict[int, bool] = {}
 scheduled_tasks: dict[int, asyncio.Task] = {}
 
-SEARCH_TRIGGERS = (
-    "знайди", "знайдіть",
-    "шукай", "шукайте",
-    "пошукай", "пошук",
-    "покажи", "покажіть",
-    "де купити", "хочу купити",
-    "ціна на", "ціни на",
-    "скільки коштує", "скільки коштують",
-    "починай пошук", "почни пошук",
-    "найди",
-)
-
-
-FILTER_QUALIFIERS = {"лише", "тільки", "лиш", "саме", "тільки"}
-
-SCHEDULE_TRIGGERS = (
-    "встанови таймер", "постав таймер", "запусти таймер",
-    "кожні", "кожну", "кожен", "кожного",
-    "раз в годину", "раз на годину", "раз в ", "раз на ",
-    "автоматично шукай", "авто пошук", "автопошук",
-    "запусти розклад", "розклад пошуку",
-    "щогодини", "щохвилини",
-)
-
-STOP_SCHEDULE_TRIGGERS = (
-    "зупини таймер", "скасуй таймер", "вимкни таймер",
-    "відміни таймер", "зупини розклад", "скасуй розклад",
-    "стоп таймер", "стоп розклад",
-)
-
-
-def is_schedule_intent(text: str) -> bool:
-    t = text.lower().strip()
-    return any(kw in t for kw in SCHEDULE_TRIGGERS)
-
-
-def is_stop_schedule_intent(text: str) -> bool:
-    t = text.lower().strip()
-    return any(kw in t for kw in STOP_SCHEDULE_TRIGGERS)
-
-
-def extract_interval_minutes(text: str) -> int | None:
-    """Витягує інтервал у хвилинах з тексту."""
-    t = text.lower()
-    # "кожні/раз в X хвилин(у/и)"
-    m = re.search(r'(\d+)\s*(хвилин|хвилину|хвилини|хв\.?)', t)
-    if m:
-        return int(m.group(1))
-    # "кожні/раз в X годин(у/и)"
-    m = re.search(r'(\d+)\s*(годин|годину|години|год\.?)', t)
-    if m:
-        return int(m.group(1)) * 60
-    # "раз в/на годину" / "кожну годину" / "щогодини"
-    if re.search(r'(раз\s+[вна]+\s+годину|кожну\s+годину|щогодини|щогодинно)', t):
-        return 60
-    return None
-
-
-def is_search_intent(text: str) -> bool:
-    """True лише якщо є явний запит на пошук товару."""
-    t = text.lower().strip()
-    return any(kw in t for kw in SEARCH_TRIGGERS)
-
-
-def has_filter_qualifier(query: str) -> bool:
-    """True якщо запит містить уточнення-фільтр без конкретної назви товару."""
-    words = set(query.lower().split())
-    return bool(words & FILTER_QUALIFIERS)
+FILTER_QUALIFIERS = {"лише", "тільки", "лиш", "саме"}
 
 
 # ------------------------------------------------------------------ #
@@ -471,8 +403,16 @@ async def handle_text(message: Message) -> None:
     if text.startswith("/"):
         return
 
-    # --- Зупинка таймера ---
-    if is_stop_schedule_intent(text):
+    settings = await get_user_settings(user_id)
+
+    # AI класифікує намір користувача
+    intent = await asyncio.to_thread(agent.classify_intent, user_id, text)
+    action = intent.get("action", "chat")
+
+    # ------------------------------------------------------------------ #
+    # schedule_stop: зупинити таймер
+    # ------------------------------------------------------------------ #
+    if action == "schedule_stop":
         task = scheduled_tasks.pop(user_id, None)
         if task and not task.done():
             task.cancel()
@@ -480,23 +420,48 @@ async def handle_text(message: Message) -> None:
         await message.answer("⏹ Таймер зупинено. Автоматичний пошук вимкнено.")
         return
 
-    # --- Запуск таймера ---
-    if is_schedule_intent(text):
-        settings = await get_user_settings(user_id)
-        detected = detect_platforms(text)
+    # ------------------------------------------------------------------ #
+    # schedule_list: показати активні таймери
+    # ------------------------------------------------------------------ #
+    if action == "schedule_list":
+        if user_id in scheduled_tasks and not scheduled_tasks[user_id].done():
+            schedules = await get_all_schedules()
+            info = next((s for s in schedules if s["user_id"] == user_id), None)
+            if info:
+                plats = " + ".join(
+                    PLATFORM_LABELS.get(p, p)
+                    for p in info["platform"].split(",") if p
+                )
+                unit = (f"{info['interval_minutes']} хв"
+                        if info["interval_minutes"] < 60
+                        else f"{info['interval_minutes'] // 60} год")
+                await message.answer(
+                    f"⏰ Активний таймер:\n"
+                    f"Запит: «{info['query']}»\n"
+                    f"Інтервал: кожні {unit}\n"
+                    f"Платформи: {plats}\n\n"
+                    f"Щоб зупинити — напишіть «зупини таймер»."
+                )
+            else:
+                await message.answer("Активних таймерів немає.")
+        else:
+            await message.answer("Активних таймерів немає.")
+        return
+
+    # ------------------------------------------------------------------ #
+    # schedule_set: встановити таймер
+    # ------------------------------------------------------------------ #
+    if action == "schedule_set":
+        query = intent.get("query", "").strip()
+        interval = intent.get("interval_minutes")
+        detected = intent.get("platforms") or []
         platforms = detected if detected else settings["platforms"]
 
-        interval = extract_interval_minutes(text)
-        if not interval:
+        if not query or not interval:
             await message.answer(
-                "❓ Не зрозумів інтервал. Вкажіть, наприклад:\n"
-                "«Встанови таймер кожні 30 хвилин шукати кросівки Nike»"
+                "❓ Не зрозумів. Вкажіть товар і інтервал, наприклад:\n"
+                "«Кожні 30 хвилин шукати корм для собак на Prom»"
             )
-            return
-
-        query = await asyncio.to_thread(agent.extract_search_query, user_id, text)
-        if not query:
-            await message.answer("❓ Не вдалося визначити що шукати. Уточніть запит.")
             return
 
         old = scheduled_tasks.pop(user_id, None)
@@ -516,45 +481,48 @@ async def handle_text(message: Message) -> None:
         )
         return
 
-    # Search only when user explicitly asks; otherwise — AI chat
-    if not is_search_intent(text):
-        thinking = await message.answer("💭 Думаю...")
-        reply = await asyncio.to_thread(agent.follow_up, user_id, text)
-        await thinking.delete()
-        await message.answer(reply)
-        return
+    # ------------------------------------------------------------------ #
+    # search: знайти товар
+    # ------------------------------------------------------------------ #
+    if action == "search":
+        query = intent.get("query", "").strip()
+        detected = intent.get("platforms") or []
+        platforms = detected if detected else settings["platforms"]
 
-    # Визначаємо платформи: із тексту або з налаштувань
-    settings = await get_user_settings(user_id)
-    detected = detect_platforms(text)
-    platforms = detected if detected else settings["platforms"]
+        if not query:
+            await message.answer("❓ Не вдалося визначити що шукати. Уточніть, будь ласка.")
+            return
 
-    # AI витягує чистий запит
-    query = await asyncio.to_thread(agent.extract_search_query, user_id, text)
-    if not query:
-        await message.answer("❓ Не вдалося визначити що шукати. Уточніть, будь ласка.")
-        return
+        label = " + ".join(PLATFORM_LABELS.get(p, p) for p in platforms)
+        status_msg = await message.answer(
+            f"🔎 Збираю «{query}» на {label}...\n⏳ Це може зайняти трохи часу."
+        )
 
-    label = " + ".join(PLATFORM_LABELS.get(p, p) for p in platforms)
-    status_text = f"🔎 Збираю «{query}» на {label}...\n⏳ Це може зайняти трохи часу."
-    status_msg = await message.answer(status_text)
+        async def search_task():
+            await do_search(user_id, message.chat.id, query, platforms, status_msg,
+                            filter_intent=text)
 
-    async def search_task():
-        await do_search(user_id, message.chat.id, query, platforms, status_msg,
-                        filter_intent=text)
-
-    task = asyncio.create_task(search_task())
-    user_tasks[user_id] = task
-    try:
-        await task
-    except asyncio.CancelledError:
+        task = asyncio.create_task(search_task())
+        user_tasks[user_id] = task
         try:
-            await status_msg.delete()
-        except Exception:
-            pass
-        await message.answer("⛔ Пошук скасовано.")
-    finally:
-        user_tasks.pop(user_id, None)
+            await task
+        except asyncio.CancelledError:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+            await message.answer("⛔ Пошук скасовано.")
+        finally:
+            user_tasks.pop(user_id, None)
+        return
+
+    # ------------------------------------------------------------------ #
+    # chat: звичайна розмова
+    # ------------------------------------------------------------------ #
+    thinking = await message.answer("💭 Думаю...")
+    reply = await asyncio.to_thread(agent.follow_up, user_id, text)
+    await thinking.delete()
+    await message.answer(reply)
 
 
 @dp.message(F.photo)

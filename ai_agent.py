@@ -1,3 +1,4 @@
+import json
 import logging
 from pathlib import Path
 import yaml
@@ -113,6 +114,45 @@ class GeminiAgent:
             logger.error("Gemini follow-up error: %s", e)
             return "Помилка AI. Спробуйте /reboot"
 
+    def classify_intent(self, user_id: int, text: str) -> dict:
+        """AI аналізує повідомлення і повертає структурований намір.
+
+        Можливі дії:
+          search        — знайти товар
+          schedule_set  — встановити таймер автопошуку
+          schedule_stop — зупинити таймер
+          schedule_list — показати активні таймери
+          chat          — звичайна розмова / запитання
+
+        Повертає dict:
+          {"action": str, "query": str, "interval_minutes": int|None, "platforms": list[str]}
+        """
+        prompt = (
+            "Визнач намір користувача з повідомлення нижче.\n"
+            "Поверни ЛИШЕ валідний JSON (без markdown, без ```) у форматі:\n"
+            '{"action":"search"|"schedule_set"|"schedule_stop"|"schedule_list"|"chat",'
+            '"query":"чистий товарний запит без ввічливих слів, платформ, команд",'
+            '"interval_minutes":число_або_null,'
+            '"platforms":["prom","olx","rozetka","web"]}\n'
+            "Правила:\n"
+            "- platforms: лише явно згадані; якщо не згадано — порожній список []\n"
+            "- query: лише назва товару (1-7 слів), без 'будь ласка', 'знайди', назв платформ\n"
+            "- interval_minutes: скільки хвилин між запусками (для schedule_set)\n"
+            f'Повідомлення: "{text}"'
+        )
+        try:
+            raw = self._query_once(user_id, prompt)
+            # Прибираємо можливий markdown від моделі
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            return json.loads(raw.strip())
+        except Exception as e:
+            logger.error("classify_intent error: %s | raw=%s", e, locals().get("raw", ""))
+            return {"action": "chat", "query": "", "interval_minutes": None, "platforms": []}
+
     def extract_search_query(self, user_id: int, filter_hint: str = "") -> str:
         """Extract product name from conversation context, optionally with a filter hint."""
         hint = f" Користувач уточнив: '{filter_hint}'." if filter_hint else ""
@@ -120,7 +160,10 @@ class GeminiAgent:
             return self._query_once(
                 user_id,
                 f"Виходячи з нашої розмови, який саме товар потрібно знайти?{hint} "
-                "Відповідь — лише назва товару для пошуку (1-7 слів), без пояснень і зайвого тексту.",
+                "Відповідь — лише назва товару для пошуку (1-7 слів), без пояснень і зайвого тексту. "
+                "Прибери будь-які ввічливі слова (будь ласка, будьласка, прошу, дякую тощо), "
+                "назви платформ, команди пошуку та слова про таймер/розклад. "
+                "Лише сам товар.",
             )
         except Exception as e:
             logger.error("Gemini extract_search_query error: %s", e)
