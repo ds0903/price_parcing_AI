@@ -122,19 +122,27 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     ws = wb.active
     ws.title = "Результати"
 
-    # OLX не показує продавця — для решти платформ є колонка Продавець
-    show_seller = platform != "olx"
-    # Columns: №, Назва, Ціна, [Продавець], Місто, Посилання, Платформа
-    if show_seller:
+    # Rozetka: тільки назва/ціна/посилання (без продавця і міста)
+    # OLX: без продавця, але з містом
+    # Решта: повний набір колонок
+    show_seller = platform not in ("olx", "rozetka")
+    show_city   = platform != "rozetka"
+    # Columns: №, Назва, Ціна, [Продавець], [Місто], Посилання, Платформа
+    if show_seller and show_city:
         col_widths = [5, 60, 28, 28, 22, 28, 16]
         headers    = ["№", "Назва", "Ціна", "Продавець", "Місто", "Посилання", "Платформа"]
         last_col   = "G"
         n_cols     = 7
-    else:
+    elif show_city:  # OLX: no seller, has city
         col_widths = [5, 65, 28, 25, 30, 16]
         headers    = ["№", "Назва", "Ціна", "Місто", "Посилання", "Платформа"]
         last_col   = "F"
         n_cols     = 6
+    else:  # Rozetka: no seller, no city
+        col_widths = [5, 70, 30, 32, 16]
+        headers    = ["№", "Назва", "Ціна", "Посилання", "Платформа"]
+        last_col   = "E"
+        n_cols     = 5
 
     for col, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(1, col).column_letter].width = w
@@ -176,7 +184,8 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
         ws.cell(row=i, column=col, value=p.get("price", "")).alignment = center;  col += 1
         if show_seller:
             ws.cell(row=i, column=col, value=p.get("seller", "")).alignment = wrap;  col += 1
-        ws.cell(row=i, column=col, value=p.get("city", "")).alignment = wrap;  col += 1
+        if show_city:
+            ws.cell(row=i, column=col, value=p.get("city", "")).alignment = wrap;  col += 1
 
         url = p.get("url", "")
         link_cell = ws.cell(row=i, column=col, value="Відкрити →" if url else "")
@@ -225,7 +234,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 
 async def _collect_excel_results(
     user_id: int, query: str, platform: str,
-    filter_intent: str, target: int = 100, max_pages: int = 20,
+    filter_intent: str, target: int = 100, max_pages: int = 15,
 ) -> list[dict]:
     """Scrape page by page, filter each batch, accumulate until `target` results or no more pages."""
     collected: list[dict] = []
@@ -459,24 +468,16 @@ async def handle_text(message: Message) -> None:
         await save_user_settings(user_id, platform=platform)
     else:
         platform = settings["platform"]
-    query = clean_query(text)
 
-    # If query is empty or contains only filter qualifiers — extract full query from AI context
-    if not query or has_filter_qualifier(query):
-        thinking = await message.answer("💭 Уточнюю запит...")
-        query = await asyncio.to_thread(agent.extract_search_query, user_id, query)
-        await thinking.delete()
-        if not query:
-            await message.answer("❓ Що саме шукати? Уточніть, будь ласка.")
-            return
+    # Always let AI extract the clean product query from natural language
+    query = await asyncio.to_thread(agent.extract_search_query, user_id, text)
+    if not query:
+        await message.answer("❓ Не вдалося визначити що шукати. Уточніть, будь ласка.")
+        return
 
     output_mode = settings["output_mode"]
     label = PLATFORM_LABELS.get(platform, platform)
-    status_text = (
-        f"🔎 Збираю всі оголошення «{query}» на {label}...\n⏳ Це може зайняти трохи більше часу."
-        if output_mode == "excel"
-        else f"🔎 Шукаю «{query}» на {label}..."
-    )
+    status_text = f"🔎 Збираю оголошення «{query}» на {label}...\n⏳ Це може зайняти трохи часу."
     status_msg = await message.answer(status_text)
 
     async def search_task():

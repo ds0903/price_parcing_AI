@@ -16,7 +16,7 @@ _PLATFORM_KEYWORDS: dict[str, list[str]] = {
     "rozetka": ["rozetka", "розетка", "rozetka.ua", "розетка.юа"],
 }
 
-# Words to strip when cleaning the query
+# Words to strip when cleaning the query (only command words, NOT natural language)
 _STRIP_WORDS = {
     "шукай", "шукайте", "знайди", "знайдіть",
     "пошукай", "пошукуй", "покажи", "покажіть",

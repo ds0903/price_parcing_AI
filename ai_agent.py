@@ -92,7 +92,7 @@ class GeminiAgent:
         if not products:
             return "Не вдалося знайти товари для аналізу."
 
-        lines = [f"{i}. {p['name']} | {p['price']} | {p['seller']}"
+        lines = [f"{i}. {p['name']} | {p['price']}" + (f" | {p['seller']}" if p.get("seller") else "")
                  for i, p in enumerate(products, 1)]
 
         prompt = _PROMPTS["analyze_prices"].format(
