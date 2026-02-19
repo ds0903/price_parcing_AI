@@ -6,12 +6,14 @@ import re
 from scraper_prom import PromScraper
 from scraper_olx import OLXScraper
 from scraper_web import WebScraper
+from scraper_rozetka import RozetkaScraper
 
 # Platform keyword detection
 _PLATFORM_KEYWORDS: dict[str, list[str]] = {
-    "prom": ["prom", "prom.ua", "пром", "промюа"],
-    "olx":  ["olx", "олх", "олекс", "олх.юа"],
-    "web":  ["інтернет", "internet", "гугл", "google", "скрізь", "всюди", "мережа", "всіх"],
+    "prom":    ["prom", "prom.ua", "пром", "промюа"],
+    "olx":     ["olx", "олх", "олекс", "олх.юа"],
+    "web":     ["інтернет", "internet", "гугл", "google", "скрізь", "всюди", "мережа", "всіх"],
+    "rozetka": ["rozetka", "розетка", "rozetka.ua", "розетка.юа"],
 }
 
 # Words to strip when cleaning the query
@@ -25,9 +27,10 @@ _STRIP_WORDS = {
 _ALL_STRIP = _STRIP_WORDS | {kw for kws in _PLATFORM_KEYWORDS.values() for kw in kws}
 
 PLATFORM_LABELS = {
-    "prom": "Prom.ua 🛒",
-    "olx":  "OLX 📦",
-    "web":  "Інтернет 🌐",
+    "prom":    "Prom.ua 🛒",
+    "olx":     "OLX 📦",
+    "rozetka": "Rozetka 🔴",
+    "web":     "Інтернет 🌐",
 }
 
 
@@ -49,9 +52,10 @@ def clean_query(text: str) -> str:
 class SearchManager:
     def __init__(self):
         self._scrapers = {
-            "prom": PromScraper(),
-            "olx":  OLXScraper(),
-            "web":  WebScraper(),
+            "prom":    PromScraper(),
+            "olx":     OLXScraper(),
+            "rozetka": RozetkaScraper(),
+            "web":     WebScraper(),
         }
 
     def search(self, query: str, platform: str = "prom", limit: int = 10) -> list[dict]:

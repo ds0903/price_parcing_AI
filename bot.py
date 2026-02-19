@@ -75,12 +75,19 @@ def has_filter_qualifier(query: str) -> bool:
 
 def settings_keyboard(platform: str, output_mode: str) -> InlineKeyboardMarkup:
     """Inline keyboard: platform row + output mode row."""
-    platform_row = [
+    platform_row_1 = [
         InlineKeyboardButton(
             text=("✅ " if platform == p else "") + label,
             callback_data=f"platform:{p}",
         )
-        for p, label in [("prom", "🛒 Prom"), ("olx", "📦 OLX"), ("web", "🌐 Інтернет")]
+        for p, label in [("prom", "🛒 Prom"), ("olx", "📦 OLX")]
+    ]
+    platform_row_2 = [
+        InlineKeyboardButton(
+            text=("✅ " if platform == p else "") + label,
+            callback_data=f"platform:{p}",
+        )
+        for p, label in [("rozetka", "🔴 Rozetka"), ("web", "🌐 Інтернет")]
     ]
     mode_row = [
         InlineKeyboardButton(
@@ -89,7 +96,7 @@ def settings_keyboard(platform: str, output_mode: str) -> InlineKeyboardMarkup:
         )
         for m, label in MODE_LABELS.items()
     ]
-    return InlineKeyboardMarkup(inline_keyboard=[platform_row, mode_row])
+    return InlineKeyboardMarkup(inline_keyboard=[platform_row_1, platform_row_2, mode_row])
 
 
 # ------------------------------------------------------------------ #
@@ -124,22 +131,34 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     ws = wb.active
     ws.title = "Результати"
 
-    # 5 columns: №, Назва, Ціна, Місто, Посилання, Платформа
-    col_widths = [5, 65, 28, 25, 30, 18]
+    # OLX не показує продавця — для решти платформ є колонка Продавець
+    show_seller = platform != "olx"
+    # Columns: №, Назва, Ціна, [Продавець], Місто, Посилання, Платформа
+    if show_seller:
+        col_widths = [5, 60, 28, 28, 22, 28, 16]
+        headers    = ["№", "Назва", "Ціна", "Продавець", "Місто", "Посилання", "Платформа"]
+        last_col   = "G"
+        n_cols     = 7
+    else:
+        col_widths = [5, 65, 28, 25, 30, 16]
+        headers    = ["№", "Назва", "Ціна", "Місто", "Посилання", "Платформа"]
+        last_col   = "F"
+        n_cols     = 6
+
     for col, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(1, col).column_letter].width = w
 
-    blue_fill    = PatternFill("solid", fgColor="1F4E79")
-    white_font   = Font(color="FFFFFF", bold=True)
-    alt_fill     = PatternFill("solid", fgColor="D6E4F0")
-    ai_fill      = PatternFill("solid", fgColor="E2EFDA")
-    bold_font    = Font(bold=True)
-    link_font    = Font(color="0563C1", underline="single")
-    center       = Alignment(horizontal="center", vertical="center")
-    wrap         = Alignment(wrap_text=True, vertical="top")
+    blue_fill  = PatternFill("solid", fgColor="1F4E79")
+    white_font = Font(color="FFFFFF", bold=True)
+    alt_fill   = PatternFill("solid", fgColor="D6E4F0")
+    ai_fill    = PatternFill("solid", fgColor="E2EFDA")
+    bold_font  = Font(bold=True)
+    link_font  = Font(color="0563C1", underline="single")
+    center     = Alignment(horizontal="center", vertical="center")
+    wrap       = Alignment(wrap_text=True, vertical="top")
 
     # --- Row 1: title ---
-    ws.merge_cells("A1:F1")
+    ws.merge_cells(f"A1:{last_col}1")
     title_cell = ws["A1"]
     title_cell.value = (
         f'Пошук: "{query}"  |  '
@@ -152,7 +171,6 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     ws.row_dimensions[1].height = 22
 
     # --- Row 2: column headers ---
-    headers = ["№", "Назва", "Ціна", "Місто", "Посилання", "Платформа"]
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=2, column=col, value=h)
         cell.font = white_font
@@ -161,23 +179,26 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 
     # --- Rows 3+: products ---
     for i, p in enumerate(products, 3):
-        ws.cell(row=i, column=1, value=i - 2).alignment = center
-        ws.cell(row=i, column=2, value=p.get("name", "")).alignment = wrap
-        ws.cell(row=i, column=3, value=p.get("price", "")).alignment = center
-        ws.cell(row=i, column=4, value=p.get("city", "")).alignment = wrap
+        col = 1
+        ws.cell(row=i, column=col, value=i - 2).alignment = center;  col += 1
+        ws.cell(row=i, column=col, value=p.get("name", "")).alignment = wrap;  col += 1
+        ws.cell(row=i, column=col, value=p.get("price", "")).alignment = center;  col += 1
+        if show_seller:
+            ws.cell(row=i, column=col, value=p.get("seller", "")).alignment = wrap;  col += 1
+        ws.cell(row=i, column=col, value=p.get("city", "")).alignment = wrap;  col += 1
 
         url = p.get("url", "")
-        link_cell = ws.cell(row=i, column=5, value="Відкрити →" if url else "")
+        link_cell = ws.cell(row=i, column=col, value="Відкрити →" if url else "")
         if url:
             link_cell.hyperlink = url
             link_cell.font = link_font
-        link_cell.alignment = center
+        link_cell.alignment = center;  col += 1
 
-        ws.cell(row=i, column=6, value=PLATFORM_LABELS.get(p.get("platform", platform), platform)).alignment = center
+        ws.cell(row=i, column=col, value=PLATFORM_LABELS.get(p.get("platform", platform), platform)).alignment = center
 
         if i % 2 == 0:
-            for col in range(1, 7):
-                ws.cell(row=i, column=col).fill = alt_fill
+            for c in range(1, n_cols + 1):
+                ws.cell(row=i, column=c).fill = alt_fill
 
     # --- Separator row ---
     sep_row = len(products) + 3
@@ -186,7 +207,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     # --- AI Analysis block ---
     ai_start = sep_row + 1
 
-    ws.merge_cells(f"A{ai_start}:F{ai_start}")
+    ws.merge_cells(f"A{ai_start}:{last_col}{ai_start}")
     header_cell = ws.cell(row=ai_start, column=1, value="📊 AI Аналіз")
     header_cell.font = Font(bold=True, size=11, color="FFFFFF")
     header_cell.fill = blue_fill
@@ -194,7 +215,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 
     for offset, line in enumerate(ai_analysis.splitlines(), 1):
         row_idx = ai_start + offset
-        ws.merge_cells(f"A{row_idx}:F{row_idx}")
+        ws.merge_cells(f"A{row_idx}:{last_col}{row_idx}")
         cell = ws.cell(row=row_idx, column=1, value=line)
         cell.fill = ai_fill
         cell.font = bold_font if line.strip().startswith("•") else Font()
