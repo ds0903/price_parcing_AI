@@ -54,10 +54,19 @@ SEARCH_TRIGGERS = (
 )
 
 
+FILTER_QUALIFIERS = {"лише", "тільки", "лиш", "саме", "тільки"}
+
+
 def is_search_intent(text: str) -> bool:
     """True лише якщо є явний запит на пошук товару."""
     t = text.lower().strip()
     return any(kw in t for kw in SEARCH_TRIGGERS)
+
+
+def has_filter_qualifier(query: str) -> bool:
+    """True якщо запит містить уточнення-фільтр без конкретної назви товару."""
+    words = set(query.lower().split())
+    return bool(words & FILTER_QUALIFIERS)
 
 
 # ------------------------------------------------------------------ #
@@ -98,7 +107,6 @@ def format_chat(query: str, platform: str, products: list[dict], ai_analysis: st
     for i, p in enumerate(products, 1):
         lines.append(f"{i}. {p['name']}")
         lines.append(f"   💰 {p['price']}")
-        lines.append(f"   🏪 {p['seller']}")
         if p.get("city"):
             lines.append(f"   📍 {p['city']}")
         if p.get("url"):
@@ -116,21 +124,22 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     ws = wb.active
     ws.title = "Результати"
 
-    # 7 columns: №, Назва, Ціна, Продавець, Місто, Посилання, Платформа
-    col_widths = [5, 50, 18, 25, 20, 55, 14]
+    # 5 columns: №, Назва, Ціна, Місто, Посилання, Платформа
+    col_widths = [5, 65, 28, 25, 30, 18]
     for col, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(1, col).column_letter].width = w
 
-    blue_fill   = PatternFill("solid", fgColor="1F4E79")
-    white_font  = Font(color="FFFFFF", bold=True)
-    alt_fill    = PatternFill("solid", fgColor="D6E4F0")
-    ai_fill     = PatternFill("solid", fgColor="E2EFDA")
-    bold_font   = Font(bold=True)
-    center      = Alignment(horizontal="center", vertical="center")
-    wrap        = Alignment(wrap_text=True, vertical="top")
+    blue_fill    = PatternFill("solid", fgColor="1F4E79")
+    white_font   = Font(color="FFFFFF", bold=True)
+    alt_fill     = PatternFill("solid", fgColor="D6E4F0")
+    ai_fill      = PatternFill("solid", fgColor="E2EFDA")
+    bold_font    = Font(bold=True)
+    link_font    = Font(color="0563C1", underline="single")
+    center       = Alignment(horizontal="center", vertical="center")
+    wrap         = Alignment(wrap_text=True, vertical="top")
 
     # --- Row 1: title ---
-    ws.merge_cells("A1:G1")
+    ws.merge_cells("A1:F1")
     title_cell = ws["A1"]
     title_cell.value = (
         f'Пошук: "{query}"  |  '
@@ -143,7 +152,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     ws.row_dimensions[1].height = 22
 
     # --- Row 2: column headers ---
-    headers = ["№", "Назва", "Ціна", "Продавець", "Місто", "Посилання", "Платформа"]
+    headers = ["№", "Назва", "Ціна", "Місто", "Посилання", "Платформа"]
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=2, column=col, value=h)
         cell.font = white_font
@@ -155,13 +164,19 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
         ws.cell(row=i, column=1, value=i - 2).alignment = center
         ws.cell(row=i, column=2, value=p.get("name", "")).alignment = wrap
         ws.cell(row=i, column=3, value=p.get("price", "")).alignment = center
-        ws.cell(row=i, column=4, value=p.get("seller", "")).alignment = wrap
-        ws.cell(row=i, column=5, value=p.get("city", "")).alignment = wrap
-        ws.cell(row=i, column=6, value=p.get("url", "")).alignment = wrap
-        ws.cell(row=i, column=7, value=PLATFORM_LABELS.get(p.get("platform", platform), platform)).alignment = center
+        ws.cell(row=i, column=4, value=p.get("city", "")).alignment = wrap
+
+        url = p.get("url", "")
+        link_cell = ws.cell(row=i, column=5, value="Відкрити →" if url else "")
+        if url:
+            link_cell.hyperlink = url
+            link_cell.font = link_font
+        link_cell.alignment = center
+
+        ws.cell(row=i, column=6, value=PLATFORM_LABELS.get(p.get("platform", platform), platform)).alignment = center
 
         if i % 2 == 0:
-            for col in range(1, 8):
+            for col in range(1, 7):
                 ws.cell(row=i, column=col).fill = alt_fill
 
     # --- Separator row ---
@@ -171,7 +186,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     # --- AI Analysis block ---
     ai_start = sep_row + 1
 
-    ws.merge_cells(f"A{ai_start}:G{ai_start}")
+    ws.merge_cells(f"A{ai_start}:F{ai_start}")
     header_cell = ws.cell(row=ai_start, column=1, value="📊 AI Аналіз")
     header_cell.font = Font(bold=True, size=11, color="FFFFFF")
     header_cell.fill = blue_fill
@@ -179,12 +194,11 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 
     for offset, line in enumerate(ai_analysis.splitlines(), 1):
         row_idx = ai_start + offset
-        ws.merge_cells(f"A{row_idx}:G{row_idx}")
+        ws.merge_cells(f"A{row_idx}:F{row_idx}")
         cell = ws.cell(row=row_idx, column=1, value=line)
         cell.fill = ai_fill
         cell.font = bold_font if line.strip().startswith("•") else Font()
         cell.alignment = Alignment(wrap_text=True, vertical="center", indent=1)
-        # Dynamic row height based on text length
         line_count = max(1, math.ceil(len(line) / 120))
         ws.row_dimensions[row_idx].height = line_count * 15
 
@@ -203,6 +217,9 @@ async def do_search(
 ) -> None:
     limit = 100 if output_mode == "excel" else 10
     products = await asyncio.to_thread(search_manager.search, query, platform, limit)
+    # AI strict filtering when user has conversation context (e.g. after photo + filter request)
+    if user_context.get(user_id) and products:
+        products = await asyncio.to_thread(agent.filter_products_by_intent, user_id, products, query)
     ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, products, platform)
 
     if status_msg:
@@ -430,10 +447,10 @@ async def handle_text(message: Message) -> None:
         platform = settings["platform"]
     query = clean_query(text)
 
-    # If query is empty after stripping trigger words — extract from AI context
-    if not query:
-        thinking = await message.answer("💭 Визначаю що шукати...")
-        query = await asyncio.to_thread(agent.extract_search_query, user_id)
+    # If query is empty or contains only filter qualifiers — extract full query from AI context
+    if not query or has_filter_qualifier(query):
+        thinking = await message.answer("💭 Уточнюю запит...")
+        query = await asyncio.to_thread(agent.extract_search_query, user_id, query)
         await thinking.delete()
         if not query:
             await message.answer("❓ Що саме шукати? Уточніть, будь ласка.")

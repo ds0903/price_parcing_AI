@@ -57,6 +57,21 @@ class GeminiAgent:
         self._append(user_id, "model", reply)
         return reply
 
+    def _query_once(self, user_id: int, prompt: str) -> str:
+        """One-shot query using conversation history as context but without saving the reply."""
+        history = self._get_history(user_id)
+        contents = history + [
+            types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+        ]
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=_PROMPTS["system_prompt"]
+            ),
+        )
+        return response.text.strip()
+
     # ------------------------------------------------------------------ #
     #  Public methods                                                      #
     # ------------------------------------------------------------------ #
@@ -98,14 +113,42 @@ class GeminiAgent:
             logger.error("Gemini follow-up error: %s", e)
             return "Помилка AI. Спробуйте /reboot"
 
-    def extract_search_query(self, user_id: int) -> str:
-        """Extract product name from conversation context when user sent only a trigger word."""
+    def extract_search_query(self, user_id: int, filter_hint: str = "") -> str:
+        """Extract product name from conversation context, optionally with a filter hint."""
+        hint = f" Користувач уточнив: '{filter_hint}'." if filter_hint else ""
         try:
-            return self._send(
+            return self._query_once(
                 user_id,
-                "Виходячи з нашої розмови, який саме товар потрібно знайти? "
-                "Відповідь — лише назва товару для пошуку (1-5 слів), без пояснень і зайвого тексту.",
+                f"Виходячи з нашої розмови, який саме товар потрібно знайти?{hint} "
+                "Відповідь — лише назва товару для пошуку (1-7 слів), без пояснень і зайвого тексту.",
             )
         except Exception as e:
             logger.error("Gemini extract_search_query error: %s", e)
             return ""
+
+    def filter_products_by_intent(self, user_id: int, products: list[dict], query: str) -> list[dict]:
+        """Filter product list to only items matching user's actual intent from conversation."""
+        if not products:
+            return products
+        lines = "\n".join(f"{i}. {p['name']}" for i, p in enumerate(products, 1))
+        prompt = (
+            f"Запит: '{query}'. Список знайдених товарів:\n{lines}\n\n"
+            "Виходячи з нашої розмови, поверни номери товарів (через кому), "
+            "які ТОЧНО відповідають тому що шукає користувач. "
+            "Якщо всі підходять — поверни 'all'. Відповідь: лише числа або 'all', без пояснень."
+        )
+        try:
+            reply = self._query_once(user_id, prompt).strip().lower()
+            if "all" in reply:
+                return products
+            indices = []
+            for part in reply.replace(";", ",").split(","):
+                part = part.strip()
+                if part.isdigit():
+                    idx = int(part) - 1
+                    if 0 <= idx < len(products):
+                        indices.append(idx)
+            return [products[i] for i in indices] if indices else products
+        except Exception as e:
+            logger.error("filter_products_by_intent error: %s", e)
+            return products
