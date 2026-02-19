@@ -235,12 +235,15 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 async def do_search(
     user_id: int, chat_id: int, query: str,
     platform: str, output_mode: str, status_msg=None,
+    filter_intent: str = "",
 ) -> None:
     limit = 100 if output_mode == "excel" else 10
     products = await asyncio.to_thread(search_manager.search, query, platform, limit)
-    # AI strict filtering when user has conversation context (e.g. after photo + filter request)
-    if user_context.get(user_id) and products:
-        products = await asyncio.to_thread(agent.filter_products_by_intent, user_id, products, query)
+    # Strict AI filtering: run when explicit intent provided or user has conversation context
+    if (filter_intent or user_context.get(user_id)) and products:
+        products = await asyncio.to_thread(
+            agent.filter_products_by_intent, user_id, products, query, filter_intent
+        )
     ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, products, platform)
 
     if status_msg:
@@ -487,7 +490,8 @@ async def handle_text(message: Message) -> None:
     status_msg = await message.answer(status_text)
 
     async def search_task():
-        await do_search(user_id, message.chat.id, query, platform, output_mode, status_msg)
+        await do_search(user_id, message.chat.id, query, platform, output_mode, status_msg,
+                        filter_intent=text)
 
     task = asyncio.create_task(search_task())
     user_tasks[user_id] = task
@@ -517,6 +521,9 @@ async def handle_photo(message: Message) -> None:
     file_bytes = await bot.download_file(file.file_path)
     image_bytes = file_bytes.read()
 
+    # Caption = user's intent (e.g. "знайди мені продаж цього авто")
+    caption = (message.caption or "").strip()
+
     product_name = await asyncio.to_thread(agent.identify_product_from_image, image_bytes)
 
     if not product_name:
@@ -526,12 +533,19 @@ async def handle_photo(message: Message) -> None:
         )
         return
 
+    # Inject caption into AI history so filter knows the exact intent
+    if caption:
+        await asyncio.to_thread(agent.add_user_message, user_id, caption)
+
     label = PLATFORM_LABELS.get(platform, platform)
     await status_msg.edit_text(
         f"✅ Визначено: *{product_name}*\n🔎 Шукаю на {label}...",
         parse_mode="Markdown",
     )
-    await do_search(user_id, message.chat.id, product_name, platform, output_mode, status_msg)
+    await do_search(
+        user_id, message.chat.id, product_name, platform, output_mode, status_msg,
+        filter_intent=caption,
+    )
 
 
 # ------------------------------------------------------------------ #

@@ -126,21 +126,37 @@ class GeminiAgent:
             logger.error("Gemini extract_search_query error: %s", e)
             return ""
 
-    def filter_products_by_intent(self, user_id: int, products: list[dict], query: str) -> list[dict]:
-        """Filter product list to only items matching user's actual intent from conversation."""
+    def add_user_message(self, user_id: int, text: str) -> None:
+        """Inject user message into history without generating a response (for context setup)."""
+        self._append(user_id, "user", text)
+        self._append(user_id, "model", "Зрозумів, шукаю.")
+
+    def filter_products_by_intent(
+        self, user_id: int, products: list[dict], query: str, filter_intent: str = ""
+    ) -> list[dict]:
+        """Strictly filter products to only those matching user's actual intent."""
         if not products:
             return products
         lines = "\n".join(f"{i}. {p['name']}" for i, p in enumerate(products, 1))
+        intent_line = f"Уточнення від користувача: '{filter_intent}'.\n" if filter_intent else ""
         prompt = (
-            f"Запит: '{query}'. Список знайдених товарів:\n{lines}\n\n"
-            "Виходячи з нашої розмови, поверни номери товарів (через кому), "
-            "які ТОЧНО відповідають тому що шукає користувач. "
-            "Якщо всі підходять — поверни 'all'. Відповідь: лише числа або 'all', без пояснень."
+            f"Запит: '{query}'.\n"
+            f"{intent_line}"
+            f"Список оголошень:\n{lines}\n\n"
+            "ЖОРСТКА ФІЛЬТРАЦІЯ. Визнач що саме шукає користувач і залиш ЛИШЕ відповідні.\n"
+            "ОБОВ'ЯЗКОВО виключи:\n"
+            "— Запчастини, деталі, кріплення, козирки, бампери (якщо шукали ціле авто)\n"
+            "— Розбірки, шрот, авторозборки (якщо шукали цілий автомобіль)\n"
+            "— Інші моделі/марки (якщо вказано конкретну)\n"
+            "— Товари з інших категорій\n"
+            "Поверни ЛИШЕ номери через кому. Якщо всі підходять — 'all'. Якщо жодного — '0'."
         )
         try:
             reply = self._query_once(user_id, prompt).strip().lower()
             if "all" in reply:
                 return products
+            if reply == "0" or not reply:
+                return []
             indices = []
             for part in reply.replace(";", ",").split(","):
                 part = part.strip()
