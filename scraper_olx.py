@@ -1,5 +1,4 @@
 import logging
-import math
 from urllib.parse import quote
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from bs4 import BeautifulSoup
@@ -8,31 +7,73 @@ from config import HEADLESS
 logger = logging.getLogger(__name__)
 
 PLATFORM = "olx"
-_PER_PAGE = 40   # OLX shows ~40 cards per page
-_MAX_PAGES = 10  # safety cap
+_MAX_PAGES = 10
 
 
 class OLXScraper:
     BASE_URL = "https://www.olx.ua/uk/list/q-{}/"
 
     def search_page(self, query: str, page: int) -> list[dict]:
+        """Single page — used by the Excel collector (browser-per-page, but with scroll)."""
         base = self.BASE_URL.format(quote(query))
         url = base if page == 1 else f"{base}?page={page}"
-        html = self._fetch_html(url)
+        html = self._fetch_page_html(url)
         return self._parse(html) if html else []
 
     def search_products(self, query: str, limit: int = 10) -> list[dict]:
+        """Multi-page search keeping ONE browser open for all pages."""
         products: list[dict] = []
-        for page in range(1, _MAX_PAGES + 1):
-            batch = self.search_page(query, page)
-            if not batch:
-                break
-            products.extend(batch)
-            if limit and len(products) >= limit:
-                break
+        base = self.BASE_URL.format(quote(query))
+
+        try:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(channel="chrome", headless=HEADLESS)
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    locale="uk-UA",
+                )
+                tab = context.new_page()
+
+                for page_num in range(1, _MAX_PAGES + 1):
+                    url = base if page_num == 1 else f"{base}?page={page_num}"
+                    try:
+                        tab.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                        try:
+                            tab.wait_for_selector(
+                                "[data-cy='l-card'], [data-testid='listing-grid']",
+                                timeout=10_000,
+                            )
+                        except PWTimeout:
+                            logger.warning("OLX p%d: cards timeout", page_num)
+
+                        # Scroll to bottom so lazy-loaded cards appear
+                        self._scroll_to_bottom(tab)
+
+                        html = tab.content()
+                        batch = self._parse(html)
+                        if not batch:
+                            break
+                        products.extend(batch)
+                        if limit and len(products) >= limit:
+                            break
+                    except Exception as e:
+                        logger.error("OLX page %d error: %s", page_num, e)
+                        break
+
+                browser.close()
+        except Exception as e:
+            logger.error("OLX Playwright error: %s", e)
+
         return products[:limit] if limit else products
 
-    def _fetch_html(self, url: str) -> str:
+    # ------------------------------------------------------------------ #
+
+    def _fetch_page_html(self, url: str) -> str:
+        """Open browser, load page, scroll, return HTML, close."""
         try:
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(channel="chrome", headless=HEADLESS)
@@ -47,15 +88,42 @@ class OLXScraper:
                 page = context.new_page()
                 page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 try:
-                    page.wait_for_selector("[data-cy='l-card'], [data-testid='listing-grid']", timeout=10_000)
+                    page.wait_for_selector(
+                        "[data-cy='l-card'], [data-testid='listing-grid']",
+                        timeout=10_000,
+                    )
                 except PWTimeout:
-                    logger.warning("OLX: product cards did not appear in time")
+                    logger.warning("OLX: cards timeout on %s", url)
+                self._scroll_to_bottom(page)
                 html = page.content()
                 browser.close()
                 return html
         except Exception as e:
             logger.error("OLX Playwright error: %s", e)
             return ""
+
+    @staticmethod
+    def _scroll_to_bottom(page) -> None:
+        """Scroll gradually to trigger lazy-loaded cards."""
+        try:
+            page.evaluate("""
+                () => new Promise(resolve => {
+                    let total = 0;
+                    const step = 400;
+                    const delay = 150;
+                    const timer = setInterval(() => {
+                        window.scrollBy(0, step);
+                        total += step;
+                        if (total >= document.body.scrollHeight) {
+                            clearInterval(timer);
+                            resolve();
+                        }
+                    }, delay);
+                })
+            """)
+            page.wait_for_timeout(500)
+        except Exception:
+            pass
 
     def _parse(self, html: str) -> list[dict]:
         soup = BeautifulSoup(html, "lxml")
