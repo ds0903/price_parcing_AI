@@ -130,14 +130,26 @@ class GeminiAgent:
         prompt = (
             "Визнач намір користувача з повідомлення нижче.\n"
             "Поверни ЛИШЕ валідний JSON (без markdown, без ```) у форматі:\n"
-            '{"action":"search"|"schedule_set"|"schedule_stop"|"schedule_list"|"chat",'
-            '"query":"чистий товарний запит без ввічливих слів, платформ, команд",'
-            '"interval_minutes":число_або_null,'
-            '"platforms":["prom","olx","rozetka","web"]}\n'
+            "{\n"
+            '  "action": "search"|"schedule_set"|"schedule_stop"|"schedule_list"|"chat",\n'
+            '  "query": "чистий товарний запит (1-7 слів, без ввічливих слів, платформ, команд)",\n'
+            '  "interval_minutes": число_або_null,\n'
+            '  "platforms": [],\n'
+            '  "filters": {\n'
+            '    "weight_kg": число_або_null,\n'
+            '    "price_min": число_або_null,\n'
+            '    "price_max": число_або_null,\n'
+            '    "brand": "рядок_або_null"\n'
+            "  }\n"
+            "}\n"
             "Правила:\n"
-            "- platforms: лише явно згадані; якщо не згадано — порожній список []\n"
-            "- query: лише назва товару (1-7 слів), без 'будь ласка', 'знайди', назв платформ\n"
-            "- interval_minutes: скільки хвилин між запусками (для schedule_set)\n"
+            "- platforms: лише явно згадані; якщо не згадано — []\n"
+            "- query: лише назва товару, без 'будь ласка', назв платформ, команд\n"
+            "- interval_minutes: хвилини між запусками (тільки для schedule_set)\n"
+            "- weight_kg: якщо вказано вагу (напр. '14 кг' → 14, '500г' → 0.5)\n"
+            "- price_min/price_max: якщо вказано ціну/діапазон у грн (без слова 'грн')\n"
+            "- brand: якщо вказано конкретний бренд/модель (напр. 'Royal Canin', 'Nike Air Max')\n"
+            "- Якщо параметр не вказано — null\n"
             f'Повідомлення: "{text}"'
         )
         try:
@@ -175,23 +187,49 @@ class GeminiAgent:
         self._append(user_id, "model", "Зрозумів, шукаю.")
 
     def filter_products_by_intent(
-        self, user_id: int, products: list[dict], query: str, filter_intent: str = ""
+        self, user_id: int, products: list[dict], query: str,
+        filter_intent: str = "", filters: dict | None = None,
     ) -> list[dict]:
-        """Strictly filter products to only those matching user's actual intent."""
+        """AI жорстко фільтрує товари за наміром користувача.
+
+        filters — структуровані вимоги з classify_intent:
+          weight_kg, price_min, price_max, brand
+        Всі вказані параметри є ОБОВ'ЯЗКОВИМИ умовами — товар без них відкидається.
+        """
         if not products:
             return products
-        lines = "\n".join(f"{i}. {p['name']}" for i, p in enumerate(products, 1))
-        intent_line = f"Уточнення від користувача: '{filter_intent}'.\n" if filter_intent else ""
+
+        lines = "\n".join(
+            f"{i}. {p['name']} | {p.get('price', '')}"
+            for i, p in enumerate(products, 1)
+        )
+        intent_line = f"Уточнення користувача: '{filter_intent}'.\n" if filter_intent else ""
+
+        # Формуємо блок жорстких вимог із структурованих фільтрів
+        hard_rules = []
+        f = filters or {}
+        if f.get("weight_kg") is not None:
+            hard_rules.append(f"— Вага ОБОВ'ЯЗКОВО {f['weight_kg']} кг (будь-яке написання: кг, kg, кілограм тощо)")
+        if f.get("price_min") is not None:
+            hard_rules.append(f"— Ціна НЕ МЕНШЕ {f['price_min']} грн")
+        if f.get("price_max") is not None:
+            hard_rules.append(f"— Ціна НЕ БІЛЬШЕ {f['price_max']} грн")
+        if f.get("brand"):
+            hard_rules.append(f"— Бренд/модель ОБОВ'ЯЗКОВО: {f['brand']}")
+        hard_block = ("ОБОВ'ЯЗКОВІ числові вимоги (відкидай якщо не відповідає):\n"
+                      + "\n".join(hard_rules) + "\n") if hard_rules else ""
+
         prompt = (
             f"Запит: '{query}'.\n"
             f"{intent_line}"
+            f"{hard_block}"
             f"Список оголошень:\n{lines}\n\n"
-            "ЖОРСТКА ФІЛЬТРАЦІЯ. Визнач що саме шукає користувач і залиш ЛИШЕ відповідні.\n"
-            "ОБОВ'ЯЗКОВО виключи:\n"
-            "— Запчастини, деталі, кріплення, козирки, бампери (якщо шукали ціле авто)\n"
-            "— Розбірки, шрот, авторозборки (якщо шукали цілий автомобіль)\n"
-            "— Інші моделі/марки (якщо вказано конкретну)\n"
+            "ЖОРСТКА ФІЛЬТРАЦІЯ — залиш ЛИШЕ ті що точно відповідають запиту.\n"
+            "ВИКЛЮЧАЙ:\n"
+            "— Запчастини, деталі, аксесуари (якщо шукали цілий товар)\n"
+            "— Інші моделі, марки, розміри (якщо вказано конкретні)\n"
             "— Товари з інших категорій\n"
+            "— Товари що не відповідають обов'язковим вимогам вище\n"
             "Поверни ЛИШЕ номери через кому. Якщо всі підходять — 'all'. Якщо жодного — '0'."
         )
         try:

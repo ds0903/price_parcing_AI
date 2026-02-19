@@ -209,22 +209,26 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 
 async def _collect_excel_results(
     user_id: int, query: str, platform: str,
-    filter_intent: str, target: int = 100, max_pages: int = 5,
+    filter_intent: str, filters: dict | None = None,
+    target: int = 100, max_pages: int = 5,
 ) -> list[dict]:
-    """Scrape page by page, filter each batch, accumulate until `target` results or no more pages."""
+    """Scrape page by page, AI-фільтрує кожну порцію, накопичує до target."""
     collected: list[dict] = []
-    should_filter = filter_intent or user_context.get(user_id)
+    should_filter = filter_intent or user_context.get(user_id) or filters
 
     for page in range(1, max_pages + 1):
         raw = await asyncio.to_thread(search_manager.search_page, query, platform, page)
         if not raw:
-            break  # no more pages
+            break
+
         if should_filter:
             batch = await asyncio.to_thread(
-                agent.filter_products_by_intent, user_id, raw, query, filter_intent
+                agent.filter_products_by_intent,
+                user_id, raw, query, filter_intent, filters or {},
             )
         else:
             batch = raw
+
         collected.extend(batch)
         if len(collected) >= target:
             break
@@ -251,12 +255,11 @@ async def _search_one_platform(
 async def do_search(
     user_id: int, chat_id: int, query: str,
     platforms: list[str], status_msg=None,
-    filter_intent: str = "",
+    filter_intent: str = "", filters: dict | None = None,
 ) -> None:
     """Паралельний пошук по всіх платформах — окремий Excel на кожну."""
-    # Запускаємо збір даних паралельно для всіх платформ
     gather_tasks = [
-        _collect_excel_results(user_id, query, p, filter_intent)
+        _collect_excel_results(user_id, query, p, filter_intent, filters)
         for p in platforms
     ]
     results_list: list[list[dict]] = await asyncio.gather(*gather_tasks)
@@ -488,19 +491,32 @@ async def handle_text(message: Message) -> None:
         query = intent.get("query", "").strip()
         detected = intent.get("platforms") or []
         platforms = detected if detected else settings["platforms"]
+        filters = intent.get("filters") or {}
 
         if not query:
             await message.answer("❓ Не вдалося визначити що шукати. Уточніть, будь ласка.")
             return
 
+        # Формуємо підказку про активні фільтри
+        filter_hints = []
+        if filters.get("weight_kg") is not None:
+            filter_hints.append(f"вага: {filters['weight_kg']} кг")
+        if filters.get("price_min") is not None:
+            filter_hints.append(f"від {filters['price_min']} грн")
+        if filters.get("price_max") is not None:
+            filter_hints.append(f"до {filters['price_max']} грн")
+        if filters.get("brand"):
+            filter_hints.append(f"бренд: {filters['brand']}")
+        filter_str = f"\nФільтри: {', '.join(filter_hints)}" if filter_hints else ""
+
         label = " + ".join(PLATFORM_LABELS.get(p, p) for p in platforms)
         status_msg = await message.answer(
-            f"🔎 Збираю «{query}» на {label}...\n⏳ Це може зайняти трохи часу."
+            f"🔎 Збираю «{query}» на {label}...{filter_str}\n⏳ Це може зайняти трохи часу."
         )
 
         async def search_task():
             await do_search(user_id, message.chat.id, query, platforms, status_msg,
-                            filter_intent=text)
+                            filter_intent=text, filters=filters)
 
         task = asyncio.create_task(search_task())
         user_tasks[user_id] = task
@@ -549,8 +565,12 @@ async def handle_photo(message: Message) -> None:
         )
         return
 
+    # Витягуємо структуровані фільтри з підпису (якщо є)
+    caption_filters: dict = {}
     if caption:
         await asyncio.to_thread(agent.add_user_message, user_id, caption)
+        caption_intent = await asyncio.to_thread(agent.classify_intent, user_id, caption)
+        caption_filters = caption_intent.get("filters") or {}
 
     label = " + ".join(PLATFORM_LABELS.get(p, p) for p in platforms)
     await status_msg.edit_text(
@@ -559,7 +579,7 @@ async def handle_photo(message: Message) -> None:
     )
     await do_search(
         user_id, message.chat.id, product_name, platforms, status_msg,
-        filter_intent=caption,
+        filter_intent=caption, filters=caption_filters,
     )
 
 
