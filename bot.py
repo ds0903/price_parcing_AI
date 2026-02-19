@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import math
+import re
 from datetime import datetime
 
 import openpyxl
@@ -15,7 +16,7 @@ from aiogram.types import (
 )
 
 from config import TELEGRAM_BOT_TOKEN
-from scraper import SearchManager, detect_platform, clean_query, PLATFORM_LABELS
+from scraper import SearchManager, detect_platforms, clean_query, PLATFORM_LABELS
 from ai_agent import GeminiAgent
 from database import (
     ensure_database_exists, init_db, close_pool,
@@ -54,6 +55,48 @@ SEARCH_TRIGGERS = (
 
 FILTER_QUALIFIERS = {"лише", "тільки", "лиш", "саме", "тільки"}
 
+SCHEDULE_TRIGGERS = (
+    "встанови таймер", "постав таймер", "запусти таймер",
+    "кожні", "кожну", "кожен", "кожного",
+    "раз в годину", "раз на годину", "раз в ", "раз на ",
+    "автоматично шукай", "авто пошук", "автопошук",
+    "запусти розклад", "розклад пошуку",
+    "щогодини", "щохвилини",
+)
+
+STOP_SCHEDULE_TRIGGERS = (
+    "зупини таймер", "скасуй таймер", "вимкни таймер",
+    "відміни таймер", "зупини розклад", "скасуй розклад",
+    "стоп таймер", "стоп розклад",
+)
+
+
+def is_schedule_intent(text: str) -> bool:
+    t = text.lower().strip()
+    return any(kw in t for kw in SCHEDULE_TRIGGERS)
+
+
+def is_stop_schedule_intent(text: str) -> bool:
+    t = text.lower().strip()
+    return any(kw in t for kw in STOP_SCHEDULE_TRIGGERS)
+
+
+def extract_interval_minutes(text: str) -> int | None:
+    """Витягує інтервал у хвилинах з тексту."""
+    t = text.lower()
+    # "кожні/раз в X хвилин(у/и)"
+    m = re.search(r'(\d+)\s*(хвилин|хвилину|хвилини|хв\.?)', t)
+    if m:
+        return int(m.group(1))
+    # "кожні/раз в X годин(у/и)"
+    m = re.search(r'(\d+)\s*(годин|годину|години|год\.?)', t)
+    if m:
+        return int(m.group(1)) * 60
+    # "раз в/на годину" / "кожну годину" / "щогодини"
+    if re.search(r'(раз\s+[вна]+\s+годину|кожну\s+годину|щогодини|щогодинно)', t):
+        return 60
+    return None
+
 
 def is_search_intent(text: str) -> bool:
     """True лише якщо є явний запит на пошук товару."""
@@ -71,21 +114,21 @@ def has_filter_qualifier(query: str) -> bool:
 #  Keyboards                                                           #
 # ------------------------------------------------------------------ #
 
-def settings_keyboard(platform: str, output_mode: str) -> InlineKeyboardMarkup:
-    """Inline keyboard: platform row + output mode row."""
+def settings_keyboard(platforms: list[str], output_mode: str = "") -> InlineKeyboardMarkup:
+    """Inline keyboard: мультивибір платформ (можна вибрати кілька)."""
     platform_row_1 = [
         InlineKeyboardButton(
-            text=("✅ " if platform == p else "") + label,
+            text=("✅ " if p in platforms else "◻️ ") + label,
             callback_data=f"platform:{p}",
         )
-        for p, label in [("prom", "🛒 Prom"), ("olx", "📦 OLX")]
+        for p, label in [("prom", "Prom"), ("olx", "OLX")]
     ]
     platform_row_2 = [
         InlineKeyboardButton(
-            text=("✅ " if platform == p else "") + label,
+            text=("✅ " if p in platforms else "◻️ ") + label,
             callback_data=f"platform:{p}",
         )
-        for p, label in [("rozetka", "🔴 Rozetka"), ("web", "🌐 Інтернет")]
+        for p, label in [("rozetka", "Rozetka"), ("web", "Інтернет")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=[platform_row_1, platform_row_2])
 
@@ -234,7 +277,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 
 async def _collect_excel_results(
     user_id: int, query: str, platform: str,
-    filter_intent: str, target: int = 100, max_pages: int = 15,
+    filter_intent: str, target: int = 100, max_pages: int = 5,
 ) -> list[dict]:
     """Scrape page by page, filter each batch, accumulate until `target` results or no more pages."""
     collected: list[dict] = []
@@ -257,13 +300,34 @@ async def _collect_excel_results(
     return collected[:target]
 
 
-async def do_search(
+async def _search_one_platform(
     user_id: int, chat_id: int, query: str,
-    platform: str, output_mode: str = "excel", status_msg=None,
-    filter_intent: str = "",
+    platform: str, filter_intent: str = "",
 ) -> None:
+    """Збирає та надсилає Excel для однієї платформи."""
     products = await _collect_excel_results(user_id, query, platform, filter_intent)
     ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, products, platform)
+    xlsx_bytes = await asyncio.to_thread(build_excel, query, platform, products, ai_analysis)
+    filename = f"price_{query[:25].replace(' ', '_')}_{platform}.xlsx"
+    await bot.send_document(
+        chat_id,
+        BufferedInputFile(xlsx_bytes, filename=filename),
+        caption=f'📊 {PLATFORM_LABELS.get(platform, platform)}: "{query}"',
+    )
+
+
+async def do_search(
+    user_id: int, chat_id: int, query: str,
+    platforms: list[str], status_msg=None,
+    filter_intent: str = "",
+) -> None:
+    """Паралельний пошук по всіх платформах — окремий Excel на кожну."""
+    # Запускаємо збір даних паралельно для всіх платформ
+    gather_tasks = [
+        _collect_excel_results(user_id, query, p, filter_intent)
+        for p in platforms
+    ]
+    results_list: list[list[dict]] = await asyncio.gather(*gather_tasks)
 
     if status_msg:
         try:
@@ -271,24 +335,29 @@ async def do_search(
         except Exception:
             pass
 
-    xlsx_bytes = await asyncio.to_thread(build_excel, query, platform, products, ai_analysis)
-    filename = f"price_{query[:30].replace(' ', '_')}.xlsx"
-    await bot.send_document(
-        chat_id,
-        BufferedInputFile(xlsx_bytes, filename=filename),
-        caption=f'📊 Результати: "{query}" [{PLATFORM_LABELS.get(platform, platform)}]',
-    )
+    # Формуємо і надсилаємо Excel по черзі (щоб не флудити одночасно)
+    for platform, products in zip(platforms, results_list):
+        ai_analysis = await asyncio.to_thread(
+            agent.analyze_prices, user_id, query, products, platform
+        )
+        xlsx_bytes = await asyncio.to_thread(build_excel, query, platform, products, ai_analysis)
+        filename = f"price_{query[:25].replace(' ', '_')}_{platform}.xlsx"
+        await bot.send_document(
+            chat_id,
+            BufferedInputFile(xlsx_bytes, filename=filename),
+            caption=f'📊 {PLATFORM_LABELS.get(platform, platform)}: "{query}"',
+        )
 
     user_context[user_id] = True
 
 
 def _start_schedule_task(
     user_id: int, chat_id: int, interval: int,
-    query: str, platform: str, output_mode: str,
+    query: str, platforms: list[str],
 ) -> asyncio.Task:
     async def loop():
         while True:
-            await do_search(user_id, chat_id, query, platform, output_mode)
+            await do_search(user_id, chat_id, query, platforms)
             await asyncio.sleep(interval * 60)
 
     task = asyncio.create_task(loop())
@@ -307,10 +376,10 @@ async def on_startup() -> None:
 
     schedules = await get_all_schedules()
     for s in schedules:
-        settings = await get_user_settings(s["user_id"])
+        platforms = [p for p in s.get("platform", "prom").split(",") if p]
         _start_schedule_task(
             s["user_id"], s["chat_id"], s["interval_minutes"],
-            s["query"], s.get("platform", "prom"), settings["output_mode"],
+            s["query"], platforms,
         )
     if schedules:
         logger.info("Restored %d scheduled task(s) from DB", len(schedules))
@@ -333,21 +402,20 @@ async def cmd_start(message: Message) -> None:
     settings = await get_user_settings(user_id)
     await message.answer(
         "👋 Привіт! Я бот для пошуку цін.\n\n"
-        "Оберіть платформу та формат виводу:",
-        reply_markup=settings_keyboard(settings["platform"], settings["output_mode"]),
+        "Оберіть платформи для пошуку (можна кілька):",
+        reply_markup=settings_keyboard(settings["platforms"]),
     )
 
 
 @dp.message(Command("settings"))
 async def cmd_settings(message: Message) -> None:
     settings = await get_user_settings(message.from_user.id)
-    plat = PLATFORM_LABELS.get(settings["platform"], settings["platform"])
+    plat_labels = ", ".join(PLATFORM_LABELS.get(p, p) for p in settings["platforms"])
     await message.answer(
         f"⚙️ Поточні налаштування:\n"
-        f"• Платформа: *{plat}*\n\n"
-        f"Змінити:",
-        reply_markup=settings_keyboard(settings["platform"], settings["output_mode"]),
-        parse_mode="Markdown",
+        f"Платформи: {plat_labels}\n\n"
+        f"Натисніть щоб увімкнути/вимкнути платформу:",
+        reply_markup=settings_keyboard(settings["platforms"]),
     )
 
 
@@ -355,22 +423,26 @@ async def cmd_settings(message: Message) -> None:
 async def on_platform_select(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     platform = callback.data.split(":")[1]
-    await save_user_settings(user_id, platform=platform)
+    settings = await get_user_settings(user_id)
+    platforms = list(settings["platforms"])
+
+    if platform in platforms:
+        platforms.remove(platform)
+        if not platforms:  # мінімум одна платформа
+            platforms = [platform]
+            await callback.answer("Потрібна хоча б одна платформа!")
+        else:
+            await callback.answer(f"{PLATFORM_LABELS.get(platform, platform)} вимкнено")
+    else:
+        platforms.append(platform)
+        await callback.answer(f"{PLATFORM_LABELS.get(platform, platform)} увімкнено")
+
+    await save_user_settings(user_id, platforms=platforms)
     settings = await get_user_settings(user_id)
     await callback.message.edit_reply_markup(
-        reply_markup=settings_keyboard(settings["platform"], settings["output_mode"])
+        reply_markup=settings_keyboard(settings["platforms"])
     )
-    await callback.answer(f"Платформа: {PLATFORM_LABELS.get(platform, platform)}")
 
-
-
-@dp.message(Command("platform"))
-async def cmd_platform(message: Message) -> None:
-    settings = await get_user_settings(message.from_user.id)
-    await message.answer(
-        "🛒 Оберіть платформу для пошуку:",
-        reply_markup=settings_keyboard(settings["platform"], settings["output_mode"]),
-    )
 
 
 @dp.message(Command("reboot"))
@@ -382,58 +454,6 @@ async def cmd_reboot(message: Message) -> None:
     agent.reset_chat(user_id)
     user_context.pop(user_id, None)
     await message.answer("🔄 AI перезапущено. Контекст очищено!")
-
-
-@dp.message(Command("schedule"))
-async def cmd_schedule(message: Message) -> None:
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    args = message.text.split(maxsplit=2)
-
-    if len(args) >= 2 and args[1].lower() == "stop":
-        task = scheduled_tasks.pop(user_id, None)
-        if task and not task.done():
-            task.cancel()
-        await delete_schedule(user_id)
-        await message.answer("⏹ Розклад зупинено.")
-        return
-
-    if len(args) < 3:
-        await message.answer(
-            "❌ Формат: `/schedule <хвилини> <запит>`\n"
-            "Приклад: `/schedule 5 кросівки Nike`\n"
-            "Зупинити: `/schedule stop`",
-            parse_mode="Markdown",
-        )
-        return
-
-    try:
-        interval = int(args[1])
-        if interval < 1:
-            raise ValueError
-    except ValueError:
-        await message.answer("❌ Кількість хвилин має бути цілим числом ≥ 1")
-        return
-
-    query = args[2].strip()
-    settings = await get_user_settings(user_id)
-    platform = settings["platform"]
-    output_mode = settings["output_mode"]
-
-    old = scheduled_tasks.pop(user_id, None)
-    if old and not old.done():
-        old.cancel()
-
-    await save_schedule(user_id, chat_id, interval, query, platform)
-    _start_schedule_task(user_id, chat_id, interval, query, platform, output_mode)
-
-    label_p = PLATFORM_LABELS.get(platform, platform)
-    await message.answer(
-        f"⏰ Розклад: кожні *{interval} хв* шукатиму «{query}»\n"
-        f"Платформа: *{label_p}*\n"
-        "Зупинити: /schedule stop",
-        parse_mode="Markdown",
-    )
 
 
 # ------------------------------------------------------------------ #
@@ -451,6 +471,51 @@ async def handle_text(message: Message) -> None:
     if text.startswith("/"):
         return
 
+    # --- Зупинка таймера ---
+    if is_stop_schedule_intent(text):
+        task = scheduled_tasks.pop(user_id, None)
+        if task and not task.done():
+            task.cancel()
+        await delete_schedule(user_id)
+        await message.answer("⏹ Таймер зупинено. Автоматичний пошук вимкнено.")
+        return
+
+    # --- Запуск таймера ---
+    if is_schedule_intent(text):
+        settings = await get_user_settings(user_id)
+        detected = detect_platforms(text)
+        platforms = detected if detected else settings["platforms"]
+
+        interval = extract_interval_minutes(text)
+        if not interval:
+            await message.answer(
+                "❓ Не зрозумів інтервал. Вкажіть, наприклад:\n"
+                "«Встанови таймер кожні 30 хвилин шукати кросівки Nike»"
+            )
+            return
+
+        query = await asyncio.to_thread(agent.extract_search_query, user_id, text)
+        if not query:
+            await message.answer("❓ Не вдалося визначити що шукати. Уточніть запит.")
+            return
+
+        old = scheduled_tasks.pop(user_id, None)
+        if old and not old.done():
+            old.cancel()
+
+        platforms_str = ",".join(platforms)
+        await save_schedule(user_id, message.chat.id, interval, query, platforms_str)
+        _start_schedule_task(user_id, message.chat.id, interval, query, platforms)
+
+        label_p = " + ".join(PLATFORM_LABELS.get(p, p) for p in platforms)
+        unit = f"{interval} хв" if interval < 60 else f"{interval // 60} год"
+        await message.answer(
+            f"⏰ Таймер встановлено!\n"
+            f"Кожні {unit} шукатиму «{query}» на {label_p}.\n"
+            f"Щоб зупинити — напишіть «зупини таймер»."
+        )
+        return
+
     # Search only when user explicitly asks; otherwise — AI chat
     if not is_search_intent(text):
         thinking = await message.answer("💭 Думаю...")
@@ -459,29 +524,23 @@ async def handle_text(message: Message) -> None:
         await message.answer(reply)
         return
 
-    # Detect platform from text; otherwise use saved setting
-    detected = detect_platform(text)
+    # Визначаємо платформи: із тексту або з налаштувань
     settings = await get_user_settings(user_id)
+    detected = detect_platforms(text)
+    platforms = detected if detected else settings["platforms"]
 
-    if detected:
-        platform = detected
-        await save_user_settings(user_id, platform=platform)
-    else:
-        platform = settings["platform"]
-
-    # Always let AI extract the clean product query from natural language
+    # AI витягує чистий запит
     query = await asyncio.to_thread(agent.extract_search_query, user_id, text)
     if not query:
         await message.answer("❓ Не вдалося визначити що шукати. Уточніть, будь ласка.")
         return
 
-    output_mode = settings["output_mode"]
-    label = PLATFORM_LABELS.get(platform, platform)
-    status_text = f"🔎 Збираю оголошення «{query}» на {label}...\n⏳ Це може зайняти трохи часу."
+    label = " + ".join(PLATFORM_LABELS.get(p, p) for p in platforms)
+    status_text = f"🔎 Збираю «{query}» на {label}...\n⏳ Це може зайняти трохи часу."
     status_msg = await message.answer(status_text)
 
     async def search_task():
-        await do_search(user_id, message.chat.id, query, platform, output_mode, status_msg,
+        await do_search(user_id, message.chat.id, query, platforms, status_msg,
                         filter_intent=text)
 
     task = asyncio.create_task(search_task())
@@ -502,8 +561,7 @@ async def handle_text(message: Message) -> None:
 async def handle_photo(message: Message) -> None:
     user_id = message.from_user.id
     settings = await get_user_settings(user_id)
-    platform = settings["platform"]
-    output_mode = settings["output_mode"]
+    platforms = settings["platforms"]
 
     status_msg = await message.answer("🖼 Аналізую фото за допомогою AI...")
 
@@ -512,7 +570,6 @@ async def handle_photo(message: Message) -> None:
     file_bytes = await bot.download_file(file.file_path)
     image_bytes = file_bytes.read()
 
-    # Caption = user's intent (e.g. "знайди мені продаж цього авто")
     caption = (message.caption or "").strip()
 
     product_name = await asyncio.to_thread(agent.identify_product_from_image, image_bytes)
@@ -524,17 +581,16 @@ async def handle_photo(message: Message) -> None:
         )
         return
 
-    # Inject caption into AI history so filter knows the exact intent
     if caption:
         await asyncio.to_thread(agent.add_user_message, user_id, caption)
 
-    label = PLATFORM_LABELS.get(platform, platform)
+    label = " + ".join(PLATFORM_LABELS.get(p, p) for p in platforms)
     await status_msg.edit_text(
         f"✅ Визначено: *{product_name}*\n🔎 Шукаю на {label}...",
         parse_mode="Markdown",
     )
     await do_search(
-        user_id, message.chat.id, product_name, platform, output_mode, status_msg,
+        user_id, message.chat.id, product_name, platforms, status_msg,
         filter_intent=caption,
     )
 
