@@ -212,22 +212,24 @@ async def _collect_excel_results(
     filter_intent: str, filters: dict | None = None,
     target: int = 100, max_pages: int = 5,
 ) -> list[dict]:
-    """Scrape page by page, AI-фільтрує кожну порцію, накопичує до target."""
+    """Scrape page by page, AI завжди фільтрує кожну порцію, накопичує до target.
+
+    AI працює в двох режимах:
+      - ШИРОКИЙ: немає уточнень → бере всі варіанти категорії
+      - СУВОРИЙ: є filter_intent або filters → тільки точні збіги
+    """
     collected: list[dict] = []
-    should_filter = filter_intent or user_context.get(user_id) or filters
 
     for page in range(1, max_pages + 1):
         raw = await asyncio.to_thread(search_manager.search_page, query, platform, page)
         if not raw:
             break
 
-        if should_filter:
-            batch = await asyncio.to_thread(
-                agent.filter_products_by_intent,
-                user_id, raw, query, filter_intent, filters or {},
-            )
-        else:
-            batch = raw
+        # AI фільтрує ЗАВЖДИ — в широкому або суворому режимі
+        batch = await asyncio.to_thread(
+            agent.filter_products_by_intent,
+            user_id, raw, query, filter_intent, filters or {},
+        )
 
         collected.extend(batch)
         if len(collected) >= target:
