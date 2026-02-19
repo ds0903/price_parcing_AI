@@ -97,3 +97,15 @@ class GeminiAgent:
         except Exception as e:
             logger.error("Gemini follow-up error: %s", e)
             return "Помилка AI. Спробуйте /reboot"
+
+    def extract_search_query(self, user_id: int) -> str:
+        """Extract product name from conversation context when user sent only a trigger word."""
+        try:
+            return self._send(
+                user_id,
+                "Виходячи з нашої розмови, який саме товар потрібно знайти? "
+                "Відповідь — лише назва товару для пошуку (1-5 слів), без пояснень і зайвого тексту.",
+            )
+        except Exception as e:
+            logger.error("Gemini extract_search_query error: %s", e)
+            return ""

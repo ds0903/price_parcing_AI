@@ -43,7 +43,7 @@ def detect_platform(text: str) -> str | None:
 def clean_query(text: str) -> str:
     """Remove platform/navigation words from text to get the clean product query."""
     words = [w for w in text.split() if w.lower() not in _ALL_STRIP]
-    return " ".join(words).strip() or text.strip()
+    return " ".join(words).strip()
 
 
 class SearchManager:
@@ -54,6 +54,6 @@ class SearchManager:
             "web":  WebScraper(),
         }
 
-    def search(self, query: str, platform: str = "prom") -> list[dict]:
+    def search(self, query: str, platform: str = "prom", limit: int = 10) -> list[dict]:
         scraper = self._scrapers.get(platform, self._scrapers["prom"])
-        return scraper.search_products(query)
+        return scraper.search_products(query, limit=limit)

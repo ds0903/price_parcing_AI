@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+import math
 from datetime import datetime
 
 import openpyxl
@@ -98,6 +99,8 @@ def format_chat(query: str, platform: str, products: list[dict], ai_analysis: st
         lines.append(f"{i}. {p['name']}")
         lines.append(f"   💰 {p['price']}")
         lines.append(f"   🏪 {p['seller']}")
+        if p.get("city"):
+            lines.append(f"   📍 {p['city']}")
         if p.get("url"):
             lines.append(f"   🔗 {p['url']}")
         lines.append("")
@@ -113,7 +116,8 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     ws = wb.active
     ws.title = "Результати"
 
-    col_widths = [5, 50, 18, 25, 55, 14]
+    # 7 columns: №, Назва, Ціна, Продавець, Місто, Посилання, Платформа
+    col_widths = [5, 50, 18, 25, 20, 55, 14]
     for col, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(1, col).column_letter].width = w
 
@@ -126,7 +130,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     wrap        = Alignment(wrap_text=True, vertical="top")
 
     # --- Row 1: title ---
-    ws.merge_cells("A1:F1")
+    ws.merge_cells("A1:G1")
     title_cell = ws["A1"]
     title_cell.value = (
         f'Пошук: "{query}"  |  '
@@ -139,7 +143,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     ws.row_dimensions[1].height = 22
 
     # --- Row 2: column headers ---
-    headers = ["№", "Назва", "Ціна", "Продавець", "Посилання", "Платформа"]
+    headers = ["№", "Назва", "Ціна", "Продавець", "Місто", "Посилання", "Платформа"]
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=2, column=col, value=h)
         cell.font = white_font
@@ -152,11 +156,12 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
         ws.cell(row=i, column=2, value=p.get("name", "")).alignment = wrap
         ws.cell(row=i, column=3, value=p.get("price", "")).alignment = center
         ws.cell(row=i, column=4, value=p.get("seller", "")).alignment = wrap
-        ws.cell(row=i, column=5, value=p.get("url", "")).alignment = wrap
-        ws.cell(row=i, column=6, value=PLATFORM_LABELS.get(p.get("platform", platform), platform)).alignment = center
+        ws.cell(row=i, column=5, value=p.get("city", "")).alignment = wrap
+        ws.cell(row=i, column=6, value=p.get("url", "")).alignment = wrap
+        ws.cell(row=i, column=7, value=PLATFORM_LABELS.get(p.get("platform", platform), platform)).alignment = center
 
         if i % 2 == 0:
-            for col in range(1, 7):
+            for col in range(1, 8):
                 ws.cell(row=i, column=col).fill = alt_fill
 
     # --- Separator row ---
@@ -166,7 +171,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     # --- AI Analysis block ---
     ai_start = sep_row + 1
 
-    ws.merge_cells(f"A{ai_start}:F{ai_start}")
+    ws.merge_cells(f"A{ai_start}:G{ai_start}")
     header_cell = ws.cell(row=ai_start, column=1, value="📊 AI Аналіз")
     header_cell.font = Font(bold=True, size=11, color="FFFFFF")
     header_cell.fill = blue_fill
@@ -174,11 +179,14 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 
     for offset, line in enumerate(ai_analysis.splitlines(), 1):
         row_idx = ai_start + offset
-        ws.merge_cells(f"A{row_idx}:F{row_idx}")
+        ws.merge_cells(f"A{row_idx}:G{row_idx}")
         cell = ws.cell(row=row_idx, column=1, value=line)
         cell.fill = ai_fill
         cell.font = bold_font if line.strip().startswith("•") else Font()
-        cell.alignment = Alignment(vertical="center", indent=1)
+        cell.alignment = Alignment(wrap_text=True, vertical="center", indent=1)
+        # Dynamic row height based on text length
+        line_count = max(1, math.ceil(len(line) / 120))
+        ws.row_dimensions[row_idx].height = line_count * 15
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -193,7 +201,8 @@ async def do_search(
     user_id: int, chat_id: int, query: str,
     platform: str, output_mode: str, status_msg=None,
 ) -> None:
-    products = await asyncio.to_thread(search_manager.search, query, platform)
+    limit = 100 if output_mode == "excel" else 10
+    products = await asyncio.to_thread(search_manager.search, query, platform, limit)
     ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, products, platform)
 
     if status_msg:
@@ -421,9 +430,23 @@ async def handle_text(message: Message) -> None:
         platform = settings["platform"]
     query = clean_query(text)
 
+    # If query is empty after stripping trigger words — extract from AI context
+    if not query:
+        thinking = await message.answer("💭 Визначаю що шукати...")
+        query = await asyncio.to_thread(agent.extract_search_query, user_id)
+        await thinking.delete()
+        if not query:
+            await message.answer("❓ Що саме шукати? Уточніть, будь ласка.")
+            return
+
     output_mode = settings["output_mode"]
     label = PLATFORM_LABELS.get(platform, platform)
-    status_msg = await message.answer(f"🔎 Шукаю «{query}» на {label}...")
+    status_text = (
+        f"🔎 Збираю всі оголошення «{query}» на {label}...\n⏳ Це може зайняти трохи більше часу."
+        if output_mode == "excel"
+        else f"🔎 Шукаю «{query}» на {label}..."
+    )
+    status_msg = await message.answer(status_text)
 
     async def search_task():
         await do_search(user_id, message.chat.id, query, platform, output_mode, status_msg)

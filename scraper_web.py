@@ -11,10 +11,10 @@ PLATFORM = "web"
 class WebScraper:
     """Search across the whole internet via DuckDuckGo — no API key required."""
 
-    def search_products(self, query: str) -> list[dict]:
+    def search_products(self, query: str, limit: int = 10) -> list[dict]:
         search_query = f"{query} ціна купити Україна грн"
         try:
-            raw = list(DDGS().text(search_query, max_results=10))
+            raw = list(DDGS().text(search_query, max_results=limit or 100))
         except Exception as e:
             logger.error("DuckDuckGo search error: %s", e)
             return []
@@ -30,6 +30,7 @@ class WebScraper:
                 "name": title,
                 "price": self._extract_price(body),
                 "seller": self._domain(url),
+                "city": "",
                 "url": url,
                 "image_url": "",
                 "platform": PLATFORM,

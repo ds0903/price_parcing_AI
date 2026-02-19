@@ -1,4 +1,5 @@
 import logging
+import math
 from urllib.parse import quote
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from bs4 import BeautifulSoup
@@ -7,17 +8,31 @@ from config import HEADLESS
 logger = logging.getLogger(__name__)
 
 PLATFORM = "olx"
+_PER_PAGE = 40   # OLX shows ~40 cards per page
+_MAX_PAGES = 10  # safety cap
 
 
 class OLXScraper:
     BASE_URL = "https://www.olx.ua/uk/list/q-{}/"
 
-    def search_products(self, query: str) -> list[dict]:
-        url = self.BASE_URL.format(quote(query))
-        html = self._fetch_html(url)
-        if not html:
-            return []
-        return self._parse(html)[:10]
+    def search_products(self, query: str, limit: int = 10) -> list[dict]:
+        max_pages = min(_MAX_PAGES, math.ceil(limit / _PER_PAGE)) if limit else _MAX_PAGES
+        products: list[dict] = []
+
+        for page in range(1, max_pages + 1):
+            base = self.BASE_URL.format(quote(query))
+            url = base if page == 1 else f"{base}?page={page}"
+            html = self._fetch_html(url)
+            if not html:
+                break
+            batch = self._parse(html)
+            if not batch:
+                break
+            products.extend(batch)
+            if limit and len(products) >= limit:
+                break
+
+        return products[:limit] if limit else products
 
     def _fetch_html(self, url: str) -> str:
         try:
@@ -73,7 +88,18 @@ class OLXScraper:
                 price = price_tag.get_text(strip=True) if price_tag else "Ціна не вказана"
 
                 location_tag = card.select_one("[data-testid='location-date']")
-                seller = location_tag.get_text(strip=True).split("-")[0].strip() if location_tag else "OLX"
+                city = ""
+                if location_tag:
+                    loc_text = location_tag.get_text(strip=True)
+                    city = loc_text.split("-")[0].strip()
+
+                seller_tag = (
+                    card.select_one("[data-testid='seller-link']")
+                    or card.select_one("span[class*='Username']")
+                    or card.select_one("p[class*='user-card']")
+                    or card.select_one("[class*='userName']")
+                )
+                seller = seller_tag.get_text(strip=True) if seller_tag else "Приватна особа"
 
                 link_tag = card.select_one("a[href]")
                 url = link_tag["href"] if link_tag else ""
@@ -84,7 +110,7 @@ class OLXScraper:
                 image_url = img_tag.get("src", "") if img_tag else ""
 
                 products.append({
-                    "name": name, "price": price, "seller": seller,
+                    "name": name, "price": price, "seller": seller, "city": city,
                     "url": url, "image_url": image_url, "platform": PLATFORM,
                 })
             except Exception:

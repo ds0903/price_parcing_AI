@@ -1,6 +1,8 @@
 import json
 import logging
+import math
 import re
+from urllib.parse import quote
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from bs4 import BeautifulSoup
 from config import HEADLESS
@@ -8,18 +10,32 @@ from config import HEADLESS
 logger = logging.getLogger(__name__)
 
 PLATFORM = "prom"
+_PER_PAGE = 36   # Prom shows ~36 items per page
+_MAX_PAGES = 10  # safety cap
 
 
 class PromScraper:
     BASE_URL = "https://prom.ua/ua/search"
 
-    def search_products(self, query: str) -> list[dict]:
-        url = f"{self.BASE_URL}?search_term={query}"
-        html = self._fetch_html(url)
-        if not html:
-            return []
-        products = self._parse_next_data(html) or self._parse_html_cards(html)
-        return products[:10]
+    def search_products(self, query: str, limit: int = 10) -> list[dict]:
+        max_pages = min(_MAX_PAGES, math.ceil(limit / _PER_PAGE)) if limit else _MAX_PAGES
+        products: list[dict] = []
+
+        for page in range(1, max_pages + 1):
+            url = f"{self.BASE_URL}?search_term={quote(query)}"
+            if page > 1:
+                url += f"&page={page}"
+            html = self._fetch_html(url)
+            if not html:
+                break
+            batch = self._parse_next_data(html) or self._parse_html_cards(html)
+            if not batch:
+                break
+            products.extend(batch)
+            if limit and len(products) >= limit:
+                break
+
+        return products[:limit] if limit else products
 
     def _fetch_html(self, url: str) -> str:
         try:
@@ -95,8 +111,8 @@ class PromScraper:
             if url and not url.startswith("http"):
                 url = "https://prom.ua" + url
             image_url = (item.get("images") or [{}])[0].get("url", "") if item.get("images") else item.get("image", "")
-            return {"name": name, "price": price, "seller": seller, "url": url,
-                    "image_url": image_url, "platform": PLATFORM}
+            return {"name": name, "price": price, "seller": seller, "city": "",
+                    "url": url, "image_url": image_url, "platform": PLATFORM}
         except Exception:
             return None
 
@@ -122,7 +138,7 @@ class PromScraper:
                     url = "https://prom.ua" + url
                 img_tag = card.select_one("img[src]")
                 image_url = img_tag.get("src", "") if img_tag else ""
-                products.append({"name": name, "price": price, "seller": seller,
+                products.append({"name": name, "price": price, "seller": seller, "city": "",
                                  "url": url, "image_url": image_url, "platform": PLATFORM})
             except Exception:
                 continue
