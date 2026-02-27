@@ -168,12 +168,19 @@ class PromScraper:
             url = item.get("url") or item.get("href") or ""
             if url and not url.startswith("http"):
                 url = "https://prom.ua" + url
+            # Витягуємо унікальний ID товару з URL: /p1835650547-name.html → "1835650547"
+            product_id = ""
+            if url:
+                m = re.search(r'/p(\d+)-', url)
+                if m:
+                    product_id = m.group(1)
             image_url = (
                 (item.get("images") or [{}])[0].get("url", "")
                 if item.get("images") else item.get("image", "")
             )
             return {"name": name, "price": price, "seller": seller, "city": "",
-                    "url": url, "image_url": image_url, "platform": PLATFORM}
+                    "url": url, "image_url": image_url, "platform": PLATFORM,
+                    "product_id": product_id}
         except Exception:
             return None
 
@@ -207,8 +214,14 @@ class PromScraper:
                     url = "https://prom.ua" + url
                 img_tag = card.select_one("img[src]")
                 image_url = img_tag.get("src", "") if img_tag else ""
+                product_id = ""
+                if url:
+                    m = re.search(r'/p(\d+)-', url)
+                    if m:
+                        product_id = m.group(1)
                 products.append({"name": name, "price": price, "seller": seller, "city": "",
-                                 "url": url, "image_url": image_url, "platform": PLATFORM})
+                                 "url": url, "image_url": image_url, "platform": PLATFORM,
+                                 "product_id": product_id})
             except Exception:
                 continue
         return products

@@ -219,6 +219,7 @@ async def _collect_excel_results(
       - СУВОРИЙ: є filter_intent або filters → тільки точні збіги
     """
     collected: list[dict] = []
+    seen: set[str] = set()  # унікальні ID товарів (product_id або url)
 
     for page in range(1, max_pages + 1):
         raw = await asyncio.to_thread(search_manager.search_page, query, platform, page)
@@ -231,7 +232,15 @@ async def _collect_excel_results(
             user_id, raw, query, filter_intent, filters or {},
         )
 
-        collected.extend(batch)
+        for product in batch:
+            # Ідентифікатор: product_id якщо є, інакше url
+            uid = product.get("product_id") or product.get("url") or ""
+            if uid and uid in seen:
+                continue
+            if uid:
+                seen.add(uid)
+            collected.append(product)
+
         if len(collected) >= target:
             break
 
