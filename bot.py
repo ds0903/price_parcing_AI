@@ -210,30 +210,52 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 async def _collect_excel_results(
     user_id: int, query: str, platform: str,
     filter_intent: str, filters: dict | None = None,
-    target: int = 100, max_pages: int = 5,
+    target: int = 100, max_pages: int = 20,
 ) -> list[dict]:
-    """Scrape page by page, AI завжди фільтрує кожну порцію, накопичує до target.
+    """2 браузери паралельно + пайплайн: поки Gemini фільтрує пару N,
+    браузери вже тягнуть пару N+1.
 
     AI працює в двох режимах:
       - ШИРОКИЙ: немає уточнень → бере всі варіанти категорії
       - СУВОРИЙ: є filter_intent або filters → тільки точні збіги
     """
     collected: list[dict] = []
-    seen: set[str] = set()  # унікальні ID товарів (product_id або url)
+    seen: set[str] = set()
 
-    for page in range(1, max_pages + 1):
-        raw = await asyncio.to_thread(search_manager.search_page, query, platform, page)
+    async def fetch_pair(p: int) -> list[dict]:
+        """Два браузери одночасно: сторінки p і p+1."""
+        if p + 1 <= max_pages:
+            a, b = await asyncio.gather(
+                asyncio.to_thread(search_manager.search_page, query, platform, p),
+                asyncio.to_thread(search_manager.search_page, query, platform, p + 1),
+            )
+            return a + b
+        return await asyncio.to_thread(search_manager.search_page, query, platform, p)
+
+    page = 1
+    # Запускаємо першу пару одразу
+    fetch_task: asyncio.Task = asyncio.create_task(fetch_pair(page))
+
+    while page <= max_pages:
+        raw = await fetch_task
+        page += 2
+
         if not raw:
             break
 
-        # AI фільтрує ЗАВЖДИ — в широкому або суворому режимі
+        # Пайплайн: запускаємо наступну пару ДО початку фільтрації
+        if page <= max_pages:
+            fetch_task = asyncio.create_task(fetch_pair(page))
+        else:
+            fetch_task = None
+
+        # Фільтрація поточної пари (Gemini працює поки браузери тягнуть наступну)
         batch = await asyncio.to_thread(
             agent.filter_products_by_intent,
             user_id, raw, query, filter_intent, filters or {},
         )
 
         for product in batch:
-            # Ідентифікатор: product_id якщо є, інакше url
             uid = product.get("product_id") or product.get("url") or ""
             if uid and uid in seen:
                 continue
@@ -241,7 +263,9 @@ async def _collect_excel_results(
                 seen.add(uid)
             collected.append(product)
 
-        if len(collected) >= target:
+        if len(collected) >= target or fetch_task is None:
+            if fetch_task and not fetch_task.done():
+                fetch_task.cancel()
             break
 
     return collected[:target]
@@ -525,9 +549,18 @@ async def handle_text(message: Message) -> None:
             f"🔎 Збираю «{query}» на {label}...{filter_str}\n⏳ Це може зайняти трохи часу."
         )
 
+        # filter_intent передаємо лише якщо є реальні уточнення
+        # (слова-квалфікатори АБО структуровані фільтри).
+        # Інакше завжди вмикається СУВОРИЙ режим і AI відкидає половину товарів.
+        has_qualifiers = (
+            any(q in text.lower() for q in FILTER_QUALIFIERS)
+            or bool(filters and any(v is not None for v in filters.values()))
+        )
+        filter_intent_param = text if has_qualifiers else ""
+
         async def search_task():
             await do_search(user_id, message.chat.id, query, platforms, status_msg,
-                            filter_intent=text, filters=filters)
+                            filter_intent=filter_intent_param, filters=filters)
 
         task = asyncio.create_task(search_task())
         user_tasks[user_id] = task
