@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import math
+import re
 from datetime import datetime
 
 import openpyxl
@@ -93,6 +94,13 @@ def format_chat(query: str, platform: str, products: list[dict], ai_analysis: st
 
 def build_excel(query: str, platform: str, products: list[dict], ai_analysis: str) -> bytes:
     """Single sheet: info header → product table → AI analysis at the bottom."""
+    # Сортування від дешевших до дорожчих (товари без ціни — в кінець)
+    def _price_key(p: dict) -> int:
+        digits = re.sub(r"[^\d]", "", p.get("price", ""))
+        return int(digits) if digits else 10 ** 9
+
+    products = sorted(products, key=_price_key)
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Результати"
@@ -204,13 +212,38 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 
 
 # ------------------------------------------------------------------ #
+#  Helpers                                                             #
+# ------------------------------------------------------------------ #
+
+def _filter_by_price(products: list[dict], filters: dict) -> list[dict]:
+    """Програмна фільтрація по ціні — до передачі в AI."""
+    price_min = filters.get("price_min")
+    price_max = filters.get("price_max")
+    if price_min is None and price_max is None:
+        return products
+    result = []
+    for p in products:
+        digits = re.sub(r"[^\d]", "", p.get("price", ""))
+        if not digits:
+            result.append(p)  # ціна невідома — не відкидаємо
+            continue
+        price = int(digits)
+        if price_min is not None and price < price_min:
+            continue
+        if price_max is not None and price > price_max:
+            continue
+        result.append(p)
+    return result
+
+
+# ------------------------------------------------------------------ #
 #  Core search function                                                #
 # ------------------------------------------------------------------ #
 
 async def _collect_excel_results(
     user_id: int, query: str, platform: str,
     filter_intent: str, filters: dict | None = None,
-    target: int = 100, max_pages: int = 20,
+    target: int = 100, max_pages: int = 25,
 ) -> list[dict]:
     """2 браузери паралельно + пайплайн: поки Gemini фільтрує пару N,
     браузери вже тягнуть пару N+1.
@@ -248,6 +281,9 @@ async def _collect_excel_results(
             fetch_task = asyncio.create_task(fetch_pair(page))
         else:
             fetch_task = None
+
+        # Програмна фільтрація по ціні (швидко, до AI)
+        raw = _filter_by_price(raw, filters or {})
 
         # Фільтрація поточної пари (Gemini працює поки браузери тягнуть наступну)
         batch = await asyncio.to_thread(

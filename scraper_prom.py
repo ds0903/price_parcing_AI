@@ -164,9 +164,11 @@ class PromScraper:
             )
             price = self._fmt(price_raw)
             seller = (
-                item.get("company", {}).get("name")
-                or item.get("seller", {}).get("name")
-                or item.get("shop", {}).get("name")
+                (item.get("company") or {}).get("name")
+                or (item.get("seller") or {}).get("name")
+                or (item.get("shop") or {}).get("name")
+                or (item.get("merchant") or {}).get("name")
+                or item.get("company_name")
                 or "Невідомий продавець"
             )
             url = item.get("url") or item.get("href") or ""
@@ -209,7 +211,10 @@ class PromScraper:
                 price = price_tag.get_text(strip=True) if price_tag else "Ціна не вказана"
                 seller_tag = (
                     card.select_one("[data-qaid='company_name']")
-                    or card.select_one(".company-name")
+                    or card.select_one("a[data-qaid='company_link']")
+                    or card.select_one("[class*='company']")
+                    or card.select_one("[class*='seller']")
+                    or card.select_one("[class*='shop']")
                 )
                 seller = seller_tag.get_text(strip=True) if seller_tag else "Невідомий продавець"
                 link_tag = card.select_one("a[href]")
