@@ -131,7 +131,7 @@ class GeminiAgent:
             "Визнач намір користувача з повідомлення нижче.\n"
             "Поверни ЛИШЕ валідний JSON (без markdown, без ```) у форматі:\n"
             "{\n"
-            '  "action": "search"|"schedule_set"|"schedule_stop"|"schedule_list"|"chat",\n'
+            '  "action": "search"|"schedule_set"|"schedule_stop"|"schedule_list"|"reboot"|"chat",\n'
             '  "query": "чистий товарний запит (1-7 слів, без ввічливих слів, платформ, команд)",\n'
             '  "interval_minutes": число_або_null,\n'
             '  "platforms": [],\n'
@@ -149,6 +149,7 @@ class GeminiAgent:
             "- weight_kg: якщо вказано вагу (напр. '14 кг' → 14, '500г' → 0.5)\n"
             "- price_min/price_max: якщо вказано ціну/діапазон у грн (без слова 'грн')\n"
             "- brand: якщо вказано конкретний бренд/модель (напр. 'Royal Canin', 'Nike Air Max')\n"
+            "- reboot: якщо просить перезавантажити/перезапустити бота (перезавантаж, рестарт, restart, reboot тощо)\n"
             "- Якщо параметр не вказано — null\n"
             f'Повідомлення: "{text}"'
         )

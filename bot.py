@@ -484,6 +484,18 @@ async def handle_text(message: Message) -> None:
     action = intent.get("action", "chat")
 
     # ------------------------------------------------------------------ #
+    # reboot: перезавантажити AI
+    # ------------------------------------------------------------------ #
+    if action == "reboot":
+        task = user_tasks.pop(user_id, None)
+        if task and not task.done():
+            task.cancel()
+        agent.reset_chat(user_id)
+        user_context.pop(user_id, None)
+        await message.answer("🔄 AI перезапущено. Контекст очищено!")
+        return
+
+    # ------------------------------------------------------------------ #
     # schedule_stop: зупинити таймер
     # ------------------------------------------------------------------ #
     if action == "schedule_stop":
