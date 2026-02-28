@@ -47,23 +47,16 @@ FILTER_QUALIFIERS = {"лише", "тільки", "лиш", "саме"}
 #  Keyboards                                                           #
 # ------------------------------------------------------------------ #
 
-def settings_keyboard(platforms: list[str], output_mode: str = "") -> InlineKeyboardMarkup:
-    """Inline keyboard: мультивибір платформ (можна вибрати кілька)."""
-    platform_row_1 = [
+def settings_keyboard(platforms: list[str]) -> InlineKeyboardMarkup:
+    """Inline keyboard: одиночний вибір платформи (лише одна активна)."""
+    row = [
         InlineKeyboardButton(
             text=("✅ " if p in platforms else "◻️ ") + label,
             callback_data=f"platform:{p}",
         )
-        for p, label in [("prom", "Prom"), ("olx", "OLX")]
+        for p, label in [("prom", "Prom"), ("olx", "OLX"), ("rozetka", "Rozetka")]
     ]
-    platform_row_2 = [
-        InlineKeyboardButton(
-            text=("✅ " if p in platforms else "◻️ ") + label,
-            callback_data=f"platform:{p}",
-        )
-        for p, label in [("rozetka", "Rozetka"), ("web", "Інтернет")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=[platform_row_1, platform_row_2])
+    return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
 # ------------------------------------------------------------------ #
@@ -429,24 +422,10 @@ async def cmd_settings(message: Message) -> None:
 async def on_platform_select(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     platform = callback.data.split(":")[1]
-    settings = await get_user_settings(user_id)
-    platforms = list(settings["platforms"])
-
-    if platform in platforms:
-        platforms.remove(platform)
-        if not platforms:  # мінімум одна платформа
-            platforms = [platform]
-            await callback.answer("Потрібна хоча б одна платформа!")
-        else:
-            await callback.answer(f"{PLATFORM_LABELS.get(platform, platform)} вимкнено")
-    else:
-        platforms.append(platform)
-        await callback.answer(f"{PLATFORM_LABELS.get(platform, platform)} увімкнено")
-
-    await save_user_settings(user_id, platforms=platforms)
-    settings = await get_user_settings(user_id)
+    await save_user_settings(user_id, platforms=[platform])
+    await callback.answer(f"✅ Платформа: {PLATFORM_LABELS.get(platform, platform)}")
     await callback.message.edit_reply_markup(
-        reply_markup=settings_keyboard(settings["platforms"])
+        reply_markup=settings_keyboard([platform])
     )
 
 
@@ -482,6 +461,30 @@ async def handle_text(message: Message) -> None:
     # AI класифікує намір користувача
     intent = await asyncio.to_thread(agent.classify_intent, user_id, text)
     action = intent.get("action", "chat")
+
+    # ------------------------------------------------------------------ #
+    # platform_info: яка платформа зараз
+    # ------------------------------------------------------------------ #
+    if action == "platform_info":
+        label = PLATFORM_LABELS.get(settings["platforms"][0], settings["platforms"][0])
+        await message.answer(f"📍 Зараз шукаємо на: {label}")
+        return
+
+    # ------------------------------------------------------------------ #
+    # platform_switch: переключити платформу
+    # ------------------------------------------------------------------ #
+    if action == "platform_switch":
+        platform = (intent.get("platforms") or [""])[0]
+        if platform in ("prom", "olx", "rozetka"):
+            await save_user_settings(user_id, platforms=[platform])
+            label = PLATFORM_LABELS.get(platform, platform)
+            await message.answer(f"✅ Платформу змінено на {label}")
+        else:
+            await message.answer(
+                "❓ Не розпізнав платформу. Доступні: Prom, OLX, Rozetka",
+                reply_markup=settings_keyboard(settings["platforms"]),
+            )
+        return
 
     # ------------------------------------------------------------------ #
     # reboot: перезавантажити AI

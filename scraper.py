@@ -12,7 +12,7 @@ from scraper_rozetka import RozetkaScraper
 _PLATFORM_KEYWORDS: dict[str, list[str]] = {
     "prom":    ["prom", "prom.ua", "пром", "промюа"],
     "olx":     ["olx", "олх", "олекс", "олх.юа"],
-    "web":     ["інтернет", "internet", "гугл", "google", "скрізь", "всюди", "мережа", "всіх"],
+    # "web": вимкнено
     "rozetka": ["rozetka", "розетка", "rozetka.ua", "розетка.юа"],
 }
 

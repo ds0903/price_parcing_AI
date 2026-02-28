@@ -131,7 +131,7 @@ class GeminiAgent:
             "Визнач намір користувача з повідомлення нижче.\n"
             "Поверни ЛИШЕ валідний JSON (без markdown, без ```) у форматі:\n"
             "{\n"
-            '  "action": "search"|"schedule_set"|"schedule_stop"|"schedule_list"|"reboot"|"chat",\n'
+            '  "action": "search"|"schedule_set"|"schedule_stop"|"schedule_list"|"reboot"|"platform_switch"|"platform_info"|"chat",\n'
             '  "query": "чистий товарний запит (1-7 слів, без ввічливих слів, платформ, команд)",\n'
             '  "interval_minutes": число_або_null,\n'
             '  "platforms": [],\n'
@@ -150,6 +150,8 @@ class GeminiAgent:
             "- price_min/price_max: якщо вказано ціну/діапазон у грн (без слова 'грн')\n"
             "- brand: якщо вказано конкретний бренд/модель (напр. 'Royal Canin', 'Nike Air Max')\n"
             "- reboot: якщо просить перезавантажити/перезапустити бота (перезавантаж, рестарт, restart, reboot тощо)\n"
+            "- platform_switch: якщо просить змінити/переключити платформу (переключи на пром, шукай на олх, зміни на розетку тощо) — вкажи назву у полі platforms: [\"prom\"/\"olx\"/\"rozetka\"]\n"
+            "- platform_info: якщо питає яка платформа зараз активна (яка платформа, де шукаємо тощо)\n"
             "- Якщо параметр не вказано — null\n"
             f'Повідомлення: "{text}"'
         )
