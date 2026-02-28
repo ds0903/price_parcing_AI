@@ -34,14 +34,17 @@ class RozetkaScraper:
                     locale="uk-UA",
                 )
                 tab = context.new_page()
+                tab.route("**/*", lambda route: route.abort()
+                          if route.request.resource_type == "image" else route.continue_())
 
                 for page_num in range(1, _MAX_PAGES + 1):
                     url = self.BASE_URL.format(quote(query), page_num)
                     try:
                         tab.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                        tab.wait_for_timeout(600)
                         try:
                             tab.wait_for_selector(
-                                "li.goods-tile, .goods-tile__inner", timeout=10_000
+                                "li.goods-tile, .goods-tile__inner", timeout=15_000
                             )
                         except PWTimeout:
                             logger.warning("Rozetka p%d: cards timeout", page_num)
@@ -78,10 +81,13 @@ class RozetkaScraper:
                     locale="uk-UA",
                 )
                 page = context.new_page()
+                page.route("**/*", lambda route: route.abort()
+                           if route.request.resource_type == "image" else route.continue_())
                 page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                page.wait_for_timeout(600)
                 try:
                     page.wait_for_selector(
-                        "li.goods-tile, .goods-tile__inner", timeout=10_000
+                        "li.goods-tile, .goods-tile__inner", timeout=15_000
                     )
                 except PWTimeout:
                     logger.warning("Rozetka: cards timeout on %s", url)

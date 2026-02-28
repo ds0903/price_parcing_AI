@@ -37,6 +37,8 @@ class OLXScraper:
                     locale="uk-UA",
                 )
                 tab = context.new_page()
+                tab.route("**/*", lambda route: route.abort()
+                          if route.request.resource_type == "image" else route.continue_())
 
                 for page_num in range(1, _MAX_PAGES + 1):
                     url = base if page_num == 1 else f"{base}?page={page_num}"
@@ -86,6 +88,8 @@ class OLXScraper:
                     locale="uk-UA",
                 )
                 page = context.new_page()
+                page.route("**/*", lambda route: route.abort()
+                           if route.request.resource_type == "image" else route.continue_())
                 page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 try:
                     page.wait_for_selector(
