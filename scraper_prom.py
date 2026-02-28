@@ -21,7 +21,7 @@ class PromScraper:
         if page > 1:
             url += f"&page={page}"
         html = self._fetch_page_html(url)
-        return (self._parse_next_data(html) or self._parse_html_cards(html)) if html else []
+        return (self._parse_apollo_cache(html) or self._parse_next_data(html) or self._parse_html_cards(html)) if html else []
 
     def search_products(self, query: str, limit: int = 10) -> list[dict]:
         """Multi-page search keeping ONE browser open for all pages."""
@@ -55,7 +55,7 @@ class PromScraper:
                             logger.warning("Prom p%d: cards timeout", page_num)
                         self._scroll_to_bottom(tab)
                         html = tab.content()
-                        batch = self._parse_next_data(html) or self._parse_html_cards(html)
+                        batch = self._parse_apollo_cache(html) or self._parse_next_data(html) or self._parse_html_cards(html)
                         if not batch:
                             break
                         products.extend(batch)
@@ -124,6 +124,58 @@ class PromScraper:
             page.wait_for_timeout(500)
         except Exception:
             pass
+
+    def _parse_apollo_cache(self, html: str) -> list[dict]:
+        """Parse Prom's Apollo GraphQL cache (window.ApolloCacheState)."""
+        match = re.search(
+            r'window\.ApolloCacheState\s*=\s*(.+?);\s*(?:window\.|</script>)',
+            html, re.DOTALL,
+        )
+        if not match:
+            return []
+        try:
+            data = json.loads(match.group(1).strip())
+        except json.JSONDecodeError:
+            return []
+
+        products = []
+        try:
+            # Key looks like: "SearchListingQuery{\"variables\":...}"
+            for key, value in data.items():
+                if "SearchListingQuery" not in key:
+                    continue
+                raw_products = (
+                    (value.get("result") or {})
+                    .get("listing", {})
+                    .get("page", {})
+                    .get("products", [])
+                )
+                for item in raw_products:
+                    p = self._extract_apollo_item(item)
+                    if p:
+                        products.append(p)
+                if products:
+                    break  # found the right query key
+        except Exception as e:
+            logger.warning("Prom Apollo cache parse error: %s", e)
+        return products
+
+    def _extract_apollo_item(self, item: dict) -> dict | None:
+        """Extract product from Apollo cache item structure."""
+        try:
+            product = item.get("product") or {}
+            company = item.get("company") or {}
+            # Normalize to the same shape _extract_item expects
+            normalized = {
+                "name": product.get("name") or "",
+                "price": product.get("price") or product.get("discountedPrice") or 0,
+                "company": {"name": company.get("name", "")},
+                "url": product.get("url") or product.get("href") or "",
+                "images": product.get("images") or [],
+            }
+            return self._extract_item(normalized)
+        except Exception:
+            return None
 
     def _parse_next_data(self, html: str) -> list[dict]:
         match = re.search(
