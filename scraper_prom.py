@@ -38,15 +38,30 @@ class PromScraper:
                     locale="uk-UA",
                 )
                 tab = context.new_page()
-                tab.route("**/*", lambda route: route.abort()
-                          if route.request.resource_type == "image" else route.continue_())
+                
+                # Покращене блокування ресурсів
+                def block_aggressively(route):
+                    bad_resource_types = ["image", "stylesheet", "font", "media", "other"]
+                    bad_urls = ["google-analytics", "doubleclick", "facebook", "hotjar", "amplitude", "fullstory"]
+                    
+                    if route.request.resource_type in bad_resource_types:
+                        return route.abort()
+                    
+                    url = route.request.url.lower()
+                    if any(bad in url for bad in bad_urls):
+                        return route.abort()
+                        
+                    return route.continue_()
+
+                tab.route("**/*", block_aggressively)
 
                 for page_num in range(1, _MAX_PAGES + 1):
                     url = f"{self.BASE_URL}?search_term={quote(query)}"
                     if page_num > 1:
                         url += f"&page={page_num}"
                     try:
-                        tab.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                        # Чекаємо лише завантаження DOM, не чекаючи на всі скрипти
+                        tab.goto(url, wait_until="commit", timeout=20_000)
                         try:
                             tab.wait_for_selector(
                                 "[data-qaid='product_block'], article", timeout=10_000
@@ -86,9 +101,14 @@ class PromScraper:
                     locale="uk-UA",
                 )
                 page = context.new_page()
-                page.route("**/*", lambda route: route.abort()
-                           if route.request.resource_type == "image" else route.continue_())
-                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                
+                def block_aggressively(route):
+                    if route.request.resource_type in ["image", "stylesheet", "font", "media"]:
+                        return route.abort()
+                    return route.continue_()
+
+                page.route("**/*", block_aggressively)
+                page.goto(url, wait_until="commit", timeout=20_000)
                 try:
                     page.wait_for_selector(
                         "[data-qaid='product_block'], article", timeout=10_000
