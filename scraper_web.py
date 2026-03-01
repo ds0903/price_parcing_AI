@@ -1,11 +1,12 @@
 import logging
 import re
-from urllib.parse import urlparse
-from duckduckgo_search import DDGS
-
-from playwright.sync_api import sync_playwright
 import time
 import random
+import httpx
+from urllib.parse import urlparse
+from duckduckgo_search import DDGS
+from playwright.sync_api import sync_playwright
+from config import PROXY_URL, PROXY_ROTATE_URL, PROXY_ROTATE_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +16,39 @@ PLATFORM = "web"
 class WebScraper:
     """Search across the whole internet via DuckDuckGo — no API key required."""
 
+    def _rotate_proxy_ip(self) -> None:
+        """Calls the rotate URL to change mobile proxy IP if configured and enabled."""
+        if PROXY_ROTATE_ENABLED and PROXY_ROTATE_URL:
+            try:
+                logger.info("Rotating proxy IP...")
+                response = httpx.get(PROXY_ROTATE_URL, timeout=10)
+                logger.info("IP rotation response: %s", response.text.strip())
+                time.sleep(2) # Wait a bit for IP to actually change
+            except Exception as e:
+                logger.error("Failed to rotate IP: %s", e)
+        elif not PROXY_ROTATE_ENABLED:
+            logger.info("Proxy rotation is disabled by config")
+
     def open_google_manual(self, query: str) -> None:
         """Opens Google in a non-headless browser, types query with delay and waits."""
         try:
+            self._rotate_proxy_ip()
+
+            proxy_config = None
+            if PROXY_URL:
+                parsed = urlparse(PROXY_URL)
+                proxy_config = {
+                    "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
+                    "username": parsed.username,
+                    "password": parsed.password,
+                }
+                logger.info("Using proxy: %s:%s", parsed.hostname, parsed.port)
+
             # Спробуємо використати Camoufox
             try:
                 from camoufox.sync_api import Camoufox
                 logger.info("Using Camoufox for manual search")
-                with Camoufox(headless=False) as browser:
+                with Camoufox(headless=False, proxy=proxy_config) as browser:
                     self._run_google_search(browser, query)
             except (ImportError, Exception) as e:
                 if "Camoufox" not in str(e):
@@ -31,7 +57,7 @@ class WebScraper:
                 # Фоллбек на стандартний Firefox
                 from playwright.sync_api import sync_playwright
                 with sync_playwright() as pw:
-                    browser = pw.firefox.launch(headless=False)
+                    browser = pw.firefox.launch(headless=False, proxy=proxy_config)
                     self._run_google_search(browser, query)
                     browser.close()
         except Exception as e:
@@ -40,16 +66,24 @@ class WebScraper:
     def _run_google_search(self, browser, query: str) -> None:
         """Internal logic to perform the search once browser is ready."""
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+            viewport={'width': 1280, 'height': 720}
         )
         page = context.new_page()
         
-        # Перехід на Google
+        # Імітація рухів миші при завантаженні
         page.goto("https://www.google.com", wait_until="networkidle")
         
+        # Випадкові рухи мишкою
+        for _ in range(3):
+            page.mouse.move(random.randint(100, 500), random.randint(100, 500))
+            time.sleep(random.uniform(0.2, 0.5))
+
         # Обробка вікна згоди
         try:
-            page.click('button:has-text("Accept all"), button:has-text("Прийняти всі")', timeout=3000)
+            accept_btn = page.locator('button:has-text("Accept all"), button:has-text("Прийняти всі")')
+            if accept_btn.is_visible(timeout=3000):
+                accept_btn.click()
         except Exception:
             pass
 
@@ -57,13 +91,20 @@ class WebScraper:
         search_box = page.locator('textarea[name="q"], input[name="q"]').first
         search_box.wait_for(state="visible")
         
+        # Клік в поле перед вводом
+        search_box.click()
+        time.sleep(random.uniform(0.3, 0.8))
+
         # Humanize typing
-        import time, random
         for char in query:
-            search_box.type(char)
-            time.sleep(random.uniform(0.1, 0.3))
+            search_box.type(char, delay=random.randint(50, 250))
         
+        time.sleep(random.uniform(0.5, 1.2))
         search_box.press("Enter")
+        
+        # Легкий скрол після пошуку (імітація перегляду)
+        time.sleep(2)
+        page.mouse.wheel(0, random.randint(300, 600))
         
         # Чекаємо 10 хвилин
         try:
