@@ -10,9 +10,13 @@ HEADLESS = os.getenv("HEADLESS", "true").lower() != "false"
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Proxy settings
+PROXY_ENABLED = os.getenv("PROXY_ENABLED", "true").lower() != "false"
 PROXY_URL = os.getenv("PROXY_URL") # e.g. socks5://user:pass@host:port
 PROXY_ROTATE_URL = os.getenv("PROXY_ROTATE_URL") # URL for changing IP
 PROXY_ROTATE_ENABLED = os.getenv("PROXY_ROTATE_ENABLED", "true").lower() != "false"
+
+# Browser session settings
+BROWSER_SESSION_PATH = os.getenv("BROWSER_SESSION_PATH", "browser_session")
 
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN is not set in .env")

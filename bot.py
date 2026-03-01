@@ -18,6 +18,7 @@ from aiogram.types import (
 from config import TELEGRAM_BOT_TOKEN
 from scraper import SearchManager, detect_platforms, clean_query, PLATFORM_LABELS
 from ai_agent import GeminiAgent
+from scraper_web import WebScraper
 from database import (
     ensure_database_exists, init_db, close_pool,
     save_schedule, delete_schedule, get_all_schedules,
@@ -600,8 +601,9 @@ async def handle_text(message: Message) -> None:
         from scraper_web import WebScraper
         web_scraper = WebScraper()
         
-        # Запускаємо в окремому потоці, щоб не блокувати бота
-        asyncio.create_task(asyncio.to_thread(web_scraper.open_google_manual, query))
+        # Запускаємо асинхронно та зберігаємо посилання на задачу
+        task = asyncio.create_task(web_scraper.open_google_manual(query))
+        user_tasks[user_id] = task
         return
 
     # ------------------------------------------------------------------ #

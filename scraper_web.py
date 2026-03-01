@@ -1,12 +1,12 @@
 import logging
 import re
-import time
+import asyncio
 import random
 import httpx
 from urllib.parse import urlparse
 from duckduckgo_search import DDGS
-from playwright.sync_api import sync_playwright
-from config import PROXY_URL, PROXY_ROTATE_URL, PROXY_ROTATE_ENABLED
+from playwright.async_api import async_playwright
+from config import PROXY_URL, PROXY_ROTATE_URL, PROXY_ROTATE_ENABLED, BROWSER_SESSION_PATH, HEADLESS, PROXY_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -16,26 +16,30 @@ PLATFORM = "web"
 class WebScraper:
     """Search across the whole internet via DuckDuckGo — no API key required."""
 
-    def _rotate_proxy_ip(self) -> None:
+    async def _rotate_proxy_ip(self) -> None:
         """Calls the rotate URL to change mobile proxy IP if configured and enabled."""
-        if PROXY_ROTATE_ENABLED and PROXY_ROTATE_URL:
+        if PROXY_ENABLED and PROXY_ROTATE_ENABLED and PROXY_ROTATE_URL:
             try:
                 logger.info("Rotating proxy IP...")
-                response = httpx.get(PROXY_ROTATE_URL, timeout=10)
-                logger.info("IP rotation response: %s", response.text.strip())
-                time.sleep(2) # Wait a bit for IP to actually change
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(PROXY_ROTATE_URL, timeout=10)
+                    logger.info("IP rotation response: %s", response.text.strip())
+                await asyncio.sleep(2) # Wait a bit for IP to actually change
             except Exception as e:
                 logger.error("Failed to rotate IP: %s", e)
+        elif not PROXY_ENABLED:
+            logger.info("Proxy is disabled by config")
         elif not PROXY_ROTATE_ENABLED:
             logger.info("Proxy rotation is disabled by config")
 
-    def open_google_manual(self, query: str) -> None:
-        """Opens Google in a non-headless browser, types query with delay and waits."""
+    async def open_google_manual(self, query: str) -> None:
+        """Opens Google in a non-headless browser using a persistent session, types query and waits."""
+        logger.info("Starting manual Google search for: %s", query)
         try:
-            self._rotate_proxy_ip()
+            await self._rotate_proxy_ip()
 
             proxy_config = None
-            if PROXY_URL:
+            if PROXY_ENABLED and PROXY_URL:
                 parsed = urlparse(PROXY_URL)
                 proxy_config = {
                     "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
@@ -43,73 +47,73 @@ class WebScraper:
                     "password": parsed.password,
                 }
                 logger.info("Using proxy: %s:%s", parsed.hostname, parsed.port)
+            else:
+                logger.info("Proxy is disabled or PROXY_URL is missing")
 
-            # Спробуємо використати Camoufox
-            try:
-                from camoufox.sync_api import Camoufox
-                logger.info("Using Camoufox for manual search")
-                with Camoufox(headless=False, proxy=proxy_config) as browser:
-                    self._run_google_search(browser, query)
-            except (ImportError, Exception) as e:
-                if "Camoufox" not in str(e):
-                    logger.warning("Camoufox error: %s. Falling back to Firefox", e)
+            from pathlib import Path
+            user_data_dir = Path(BROWSER_SESSION_PATH).resolve()
+            user_data_dir.mkdir(parents=True, exist_ok=True)
+
+            logger.info("Using session directory: %s", user_data_dir)
+            
+            async with async_playwright() as pw:
+                logger.info("Launching browser...")
+                # Використовуємо Chromium (як в інших твоїх скраперах)
+                browser_context = await pw.chromium.launch_persistent_context(
+                    user_data_dir=str(user_data_dir),
+                    headless=False,
+                    proxy=proxy_config,
+                    channel="chrome",
+                    viewport={'width': 1280, 'height': 720},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
                 
-                # Фоллбек на стандартний Firefox
-                from playwright.sync_api import sync_playwright
-                with sync_playwright() as pw:
-                    browser = pw.firefox.launch(headless=False, proxy=proxy_config)
-                    self._run_google_search(browser, query)
-                    browser.close()
+                await self._run_google_search_in_context(browser_context, query)
+                logger.info("Closing browser context...")
+                await browser_context.close()
+                
         except Exception as e:
             logger.error("Error in open_google_manual: %s", e)
 
-    def _run_google_search(self, browser, query: str) -> None:
-        """Internal logic to perform the search once browser is ready."""
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
-            viewport={'width': 1280, 'height': 720}
-        )
-        page = context.new_page()
+    async def _run_google_search_in_context(self, context, query: str) -> None:
+        """Internal logic to perform the search using a persistent context."""
+        page = context.pages[0] if context.pages else await context.new_page()
         
-        # Імітація рухів миші при завантаженні
-        page.goto("https://www.google.com", wait_until="networkidle")
+        logger.info("Navigating to Google...")
+        await page.goto("https://www.google.com.ua", wait_until="networkidle")
         
-        # Випадкові рухи мишкою
-        for _ in range(3):
-            page.mouse.move(random.randint(100, 500), random.randint(100, 500))
-            time.sleep(random.uniform(0.2, 0.5))
-
-        # Обробка вікна згоди
-        try:
-            accept_btn = page.locator('button:has-text("Accept all"), button:has-text("Прийняти всі")')
-            if accept_btn.is_visible(timeout=3000):
-                accept_btn.click()
-        except Exception:
-            pass
-
-        # Пошук поля
         search_box = page.locator('textarea[name="q"], input[name="q"]').first
-        search_box.wait_for(state="visible")
         
-        # Клік в поле перед вводом
-        search_box.click()
-        time.sleep(random.uniform(0.3, 0.8))
-
-        # Humanize typing
-        for char in query:
-            search_box.type(char, delay=random.randint(50, 250))
-        
-        time.sleep(random.uniform(0.5, 1.2))
-        search_box.press("Enter")
-        
-        # Легкий скрол після пошуку (імітація перегляду)
-        time.sleep(2)
-        page.mouse.wheel(0, random.randint(300, 600))
-        
-        # Чекаємо 10 хвилин
         try:
-            page.wait_for_timeout(600_000) 
+            await search_box.wait_for(state="visible", timeout=10000)
         except Exception:
+            logger.info("Search box not visible (maybe CAPTCHA). Waiting for user up to 60s...")
+            try:
+                await search_box.wait_for(state="visible", timeout=60000)
+            except Exception:
+                logger.warning("Search box never appeared. Exiting.")
+                return
+
+        await search_box.click()
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        
+        logger.info("Typing query...")
+        for char in query:
+            await search_box.type(char, delay=random.randint(50, 250))
+            if random.random() < 0.05:
+                await asyncio.sleep(random.uniform(0.5, 1.0))
+        
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        await search_box.press("Enter")
+        
+        await asyncio.sleep(3)
+        await page.mouse.wheel(0, random.randint(400, 800))
+        
+        logger.info("Search complete. Keeping browser open for 10 minutes.")
+        try:
+            await asyncio.sleep(600) 
+        except asyncio.CancelledError:
+            logger.info("Manual search task cancelled.")
             pass
 
     def search_page(self, query: str, page: int) -> list[dict]:
