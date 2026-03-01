@@ -115,46 +115,8 @@ class GeminiAgent:
             return "Помилка AI. Спробуйте /reboot"
 
     def classify_intent(self, user_id: int, text: str) -> dict:
-        """AI аналізує повідомлення і повертає структурований намір.
-
-        Можливі дії:
-          search        — знайти товар
-          schedule_set  — встановити таймер автопошуку
-          schedule_stop — зупинити таймер
-          schedule_list — показати активні таймери
-          chat          — звичайна розмова / запитання
-
-        Повертає dict:
-          {"action": str, "query": str, "interval_minutes": int|None, "platforms": list[str]}
-        """
-        prompt = (
-            "Визнач намір користувача з повідомлення нижче.\n"
-            "Поверни ЛИШЕ валідний JSON (без markdown, без ```) у форматі:\n"
-            "{\n"
-            '  "action": "search"|"schedule_set"|"schedule_stop"|"schedule_list"|"reboot"|"platform_switch"|"platform_info"|"chat",\n'
-            '  "query": "чистий товарний запит (1-7 слів, без ввічливих слів, платформ, команд)",\n'
-            '  "interval_minutes": число_або_null,\n'
-            '  "platforms": [],\n'
-            '  "filters": {\n'
-            '    "weight_kg": число_або_null,\n'
-            '    "price_min": число_або_null,\n'
-            '    "price_max": число_або_null,\n'
-            '    "brand": "рядок_або_null"\n'
-            "  }\n"
-            "}\n"
-            "Правила:\n"
-            "- platforms: лише явно згадані; якщо не згадано — []\n"
-            "- query: лише назва товару, без 'будь ласка', назв платформ, команд\n"
-            "- interval_minutes: хвилини між запусками (тільки для schedule_set)\n"
-            "- weight_kg: якщо вказано вагу (напр. '14 кг' → 14, '500г' → 0.5)\n"
-            "- price_min/price_max: якщо вказано ціну/діапазон у грн (без слова 'грн')\n"
-            "- brand: якщо вказано конкретний бренд/модель (напр. 'Royal Canin', 'Nike Air Max')\n"
-            "- reboot: якщо просить перезавантажити/перезапустити бота (перезавантаж, рестарт, restart, reboot тощо)\n"
-            "- platform_switch: якщо просить змінити/переключити платформу (переключи на пром, шукай на олх, зміни на розетку тощо) — вкажи назву у полі platforms: [\"prom\"/\"olx\"/\"rozetka\"]\n"
-            "- platform_info: якщо питає яка платформа зараз активна (яка платформа, де шукаємо тощо)\n"
-            "- Якщо параметр не вказано — null\n"
-            f'Повідомлення: "{text}"'
-        )
+        """AI аналізує повідомлення і повертає структурований намір."""
+        prompt = _PROMPTS["classify_intent"].format(text=text)
         try:
             raw = self._query_once(user_id, prompt)
             # Прибираємо можливий markdown від моделі
@@ -171,15 +133,9 @@ class GeminiAgent:
     def extract_search_query(self, user_id: int, filter_hint: str = "") -> str:
         """Extract product name from conversation context, optionally with a filter hint."""
         hint = f" Користувач уточнив: '{filter_hint}'." if filter_hint else ""
+        prompt = _PROMPTS["extract_search_query"].format(hint=hint)
         try:
-            return self._query_once(
-                user_id,
-                f"Виходячи з нашої розмови, який саме товар потрібно знайти?{hint} "
-                "Відповідь — лише назва товару для пошуку (1-7 слів), без пояснень і зайвого тексту. "
-                "Прибери будь-які ввічливі слова (будь ласка, будьласка, прошу, дякую тощо), "
-                "назви платформ, команди пошуку та слова про таймер/розклад. "
-                "Лише сам товар.",
-            )
+            return self._query_once(user_id, prompt)
         except Exception as e:
             logger.error("Gemini extract_search_query error: %s", e)
             return ""
@@ -193,12 +149,7 @@ class GeminiAgent:
         self, user_id: int, products: list[dict], query: str,
         filter_intent: str = "", filters: dict | None = None,
     ) -> list[dict]:
-        """AI жорстко фільтрує товари за наміром користувача.
-
-        filters — структуровані вимоги з classify_intent:
-          weight_kg, price_min, price_max, brand
-        Всі вказані параметри є ОБОВ'ЯЗКОВИМИ умовами — товар без них відкидається.
-        """
+        """AI жорстко фільтрує товари за наміром користувача."""
         if not products:
             return products
 
@@ -226,36 +177,16 @@ class GeminiAgent:
         has_strict = bool(hard_rules) or bool(filter_intent)
 
         if has_strict:
-            strictness = (
-                "РЕЖИМ: СУВОРИЙ — користувач вказав конкретні вимоги.\n"
-                "Залишай ЛИШЕ товари що точно відповідають усім вказаним умовам.\n"
-                "ВИКЛЮЧАЙ:\n"
-                "— Товари що не відповідають обов'язковим вимогам вище\n"
-                "— Інші підвиди/вікові групи якщо вказано конкретний (напр. тільки для стерилізованих)\n"
-                "— Запчастини, аксесуари, супутні товари (якщо шукали основний товар)\n"
-                "— Інші бренди/моделі якщо вказано конкретний\n"
-            )
+            strictness = _PROMPTS["strict_mode"]
         else:
-            strictness = (
-                "РЕЖИМ: ШИРОКИЙ — користувач не уточнив підвид/тип.\n"
-                "Залишай ВСІ варіанти з правильної категорії товару:\n"
-                "— Різні підвиди (для дорослих, кошенят, стерилізованих, з виведенням шерсті тощо)\n"
-                "— Різні смаки, склади, форми випуску\n"
-                "— Різні бренди якщо не вказано конкретний\n"
-                "ВИКЛЮЧАЙ лише очевидно нерелевантне:\n"
-                "— Товари з іншої категорії (корм для собак — якщо шукали для котів)\n"
-                "— Запчастини, аксесуари замість самого товару\n"
-                "— Послуги замість товарів\n"
-            )
+            strictness = _PROMPTS["wide_mode"]
 
-        prompt = (
-            f"Запит: '{query}'.\n"
-            f"{intent_line}"
-            f"{hard_block}"
-            f"{strictness}\n"
-            f"Список оголошень (назва | ціна):\n{lines}\n\n"
-            "Поверни ЛИШЕ номери відповідних товарів через кому.\n"
-            "Якщо всі підходять — 'all'. Якщо жодного — '0'."
+        prompt = _PROMPTS["filter_products_by_intent"].format(
+            query=query,
+            intent_line=intent_line,
+            hard_block=hard_block,
+            strictness=strictness,
+            lines=lines
         )
         try:
             reply = self._query_once(user_id, prompt).strip().lower()

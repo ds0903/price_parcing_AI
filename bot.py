@@ -487,6 +487,18 @@ async def handle_text(message: Message) -> None:
         return
 
     # ------------------------------------------------------------------ #
+    # cancel_search: скасувати активний пошук
+    # ------------------------------------------------------------------ #
+    if action == "cancel_search":
+        task = user_tasks.pop(user_id, None)
+        if task and not task.done():
+            task.cancel()
+            await message.answer("⛔ Пошук скасовано.")
+        else:
+            await message.answer("Активного пошуку немає.")
+        return
+
+    # ------------------------------------------------------------------ #
     # reboot: перезавантажити AI
     # ------------------------------------------------------------------ #
     if action == "reboot":
