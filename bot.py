@@ -583,6 +583,28 @@ async def handle_text(message: Message) -> None:
         return
 
     # ------------------------------------------------------------------ #
+    # search_web_manual: відкрити гугл і вписати запит вручну
+    # ------------------------------------------------------------------ #
+    if action == "search_web_manual":
+        query = intent.get("query", "").strip()
+        if not query:
+            # Якщо запит не знайдено в намірі, спробуємо витягти з контексту
+            query = await asyncio.to_thread(agent.extract_search_query, user_id)
+        
+        if not query:
+            await message.answer("❓ Що саме шукати в інтернеті?")
+            return
+
+        await message.answer(f"🌐 Відкриваю Google та шукаю «{query}» з імітацією людини...")
+        
+        from scraper_web import WebScraper
+        web_scraper = WebScraper()
+        
+        # Запускаємо в окремому потоці, щоб не блокувати бота
+        asyncio.create_task(asyncio.to_thread(web_scraper.open_google_manual, query))
+        return
+
+    # ------------------------------------------------------------------ #
     # search: знайти товар
     # ------------------------------------------------------------------ #
     if action == "search":

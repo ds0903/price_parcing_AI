@@ -9,4 +9,5 @@ asyncpg
 duckduckgo-search
 openpyxl
 pyyaml
+camoufox
 #todo наче працює але терба буден більш точн опідлашутвати фліьтир бо деякі твоари прпосукаємо все таки нажаль

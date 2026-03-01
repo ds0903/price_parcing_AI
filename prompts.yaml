@@ -33,7 +33,7 @@ classify_intent: |
   Визнач намір користувача з повідомлення нижче.
   Поверни ЛИШЕ валідний JSON (без markdown, без ```) у форматі:
   {{
-    "action": "search"|"schedule_set"|"schedule_stop"|"schedule_list"|"reboot"|"cancel_search"|"platform_switch"|"platform_info"|"chat",
+    "action": "search"|"schedule_set"|"schedule_stop"|"schedule_list"|"reboot"|"cancel_search"|"platform_switch"|"platform_info"|"chat"|"search_web_manual",
     "query": "чистий товарний запит (1-7 слів, без ввічливих слів, платформ, команд)",
     "interval_minutes": число_або_null,
     "platforms": [],
@@ -45,6 +45,7 @@ classify_intent: |
     }}
   }}
   Правила:
+  - action: "search_web_manual", якщо користувач просить "шукай в інтернет", "відкрий гугл", "знайди в мережі" тощо.
   - platforms: лише явно згадані; якщо не згадано — []
   - query: лише назва товару, без 'будь ласка', назв платформ, команд
   - interval_minutes: хвилини між запусками (тільки для schedule_set)
