@@ -18,7 +18,7 @@ PLATFORM = "web"
 
 
 class WebScraper:
-    """Ultra-Greedy Search across Google Shopping (Scrapes EVERYTHING)."""
+    """Super-Greedy Search (Scrapes literally EVERYTHING visible)."""
 
     def _rotate_proxy_ip(self) -> None:
         if PROXY_ENABLED and PROXY_ROTATE_ENABLED and PROXY_ROTATE_URL:
@@ -28,7 +28,7 @@ class WebScraper:
             except: pass
 
     def open_google_manual(self, query: str) -> list[dict]:
-        logger.info("🚀 Starting ULTRA-GREEDY Google Shopping scraping for: %s", query)
+        logger.info("🚀 Starting SUPER-GREEDY scraping for: %s", query)
         products = []
         try:
             self._rotate_proxy_ip()
@@ -62,7 +62,6 @@ class WebScraper:
                 driver.get("https://www.google.com.ua/shopping")
                 time.sleep(3)
 
-                # Пошук та ввід
                 try:
                     sb = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.NAME, "q")))
                 except:
@@ -70,6 +69,7 @@ class WebScraper:
                 
                 sb.click()
                 sb.clear()
+                # Вводимо запит 1в1
                 for char in query:
                     sb.send_keys(char)
                     time.sleep(random.uniform(0.05, 0.15))
@@ -77,115 +77,101 @@ class WebScraper:
                 
                 time.sleep(5)
 
-                # --- Нескінченний скролінг до самого низу ---
-                logger.info("Deep scrolling to the absolute bottom...")
-                last_height = driver.execute_script("return document.body.scrollHeight")
-                scroll_attempts = 0
-                max_scrolls = 30 # Ліміт, щоб не зациклитись
-
-                while scroll_attempts < max_scrolls:
-                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                    time.sleep(random.uniform(2, 3)) # Чекаємо на підвантаження
-                    
-                    # Перевіряємо кнопку "Показати більше"
+                # Глибокий скролінг
+                for _ in range(5):
+                    driver.execute_script("window.scrollBy(0, 1000);")
+                    time.sleep(2)
                     try:
-                        more_btn = driver.find_element(By.CSS_SELECTOR, "button.GN77nd, .m67it, button:contains('Показати більше')")
-                        if more_btn.is_displayed():
-                            logger.info("Found 'Show more' button, clicking...")
-                            driver.execute_script("arguments[0].click();", more_btn)
-                            time.sleep(2)
+                        btn = driver.find_element(By.CSS_SELECTOR, "button.GN77nd, .m67it")
+                        if btn.is_displayed(): btn.click()
                     except: pass
 
-                    new_height = driver.execute_script("return document.body.scrollHeight")
-                    if new_height == last_height:
-                        # Спробуємо ще раз трохи проскролити вгору-вниз для впевненості
-                        driver.execute_script("window.scrollBy(0, -300);")
-                        time.sleep(0.5)
-                        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                        time.sleep(2)
-                        new_height = driver.execute_script("return document.body.scrollHeight")
-                        if new_height == last_height:
-                            logger.info("Reached the end of the page.")
-                            break
-                    
-                    last_height = new_height
-                    scroll_attempts += 1
-                    logger.info(f"Scroll attempt {scroll_attempts} completed...")
-
-                # --- ULTRA-GREEDY EXTRACTION ---
-                logger.info("Extracting EVERYTHING that looks like a product...")
+                # --- SUPER-GREEDY EXTRACTION ---
+                # Шукаємо всі можливі картки товарів через набір різних паттернів Google
+                logger.info("Scanning page for all product-like structures...")
                 
-                # Ми шукаємо всі блоки, в яких є посилання на товар та ціна
-                # Google використовує aclk для реклами і /shopping/product для звичайних
-                elements = driver.find_elements(By.XPATH, "//div[.//a[contains(@href, 'aclk') or contains(@href, '/shopping/product')]]")
+                # 1. Спробуємо знайти всі блоки, що містять ціну (це найнадійніше)
+                # Google Shopping зазвичай малює ціни в спанах або дівах з певними ознаками
+                all_elements = driver.find_elements(By.XPATH, "//*[contains(text(), 'грн') or contains(text(), '₴')]")
                 
-                logger.info(f"Analyzing {len(elements)} potential blocks...")
-
-                for el in elements:
+                for price_el in all_elements:
                     try:
-                        text = el.text.replace("\n", " ").strip()
-                        if not text: continue
-
-                        # 1. Шукаємо ціну через Regex (цифри + грн/₴)
-                        price_match = re.search(r'(\d[\d\s,]{0,10})\s*(грн|₴|грн\.)', text, re.I)
-                        if not price_match: continue # Якщо немає ціни - це не товар
+                        price_text = price_el.text.strip()
+                        # Перевірка що це дійсно ціна (є цифри)
+                        if not any(d.isdigit() for d in price_text): continue
                         
-                        price = price_match.group(0).strip()
+                        # Піднімаємося вгору до контейнера (зазвичай 3-5 рівнів вгору)
+                        parent = price_el
+                        found_card = False
+                        for _ in range(6):
+                            parent = parent.find_element(By.XPATH, "..")
+                            # Якщо в батьку є посилання і h3/heading - це наша картка
+                            links = parent.find_elements(By.TAG_NAME, "a")
+                            headings = parent.find_elements(By.XPATH, ".//h3 | .//*[@role='heading']")
+                            if links and headings:
+                                name = headings[0].text.strip()
+                                url = links[0].get_attribute("href")
+                                if name and url:
+                                    # Шукаємо назву магазину поруч з ціною
+                                    seller = "Інтернет-магазин"
+                                    # Часто продавець в тому ж блоці де і ціна або поруч
+                                    try:
+                                        seller_el = parent.find_element(By.CSS_SELECTOR, ".I_9096, .aULzUe, .sh-np__seller-container, .E5uYIc")
+                                        seller = seller_el.text.strip()
+                                    except:
+                                        # Резервний пошук тексту який не є ціною і назвою
+                                        txt = parent.text.replace(price_text, "").replace(name, "").strip()
+                                        if txt: seller = txt.split("\n")[0][:30]
 
-                        # 2. Шукаємо посилання
-                        try:
-                            link_el = el.find_element(By.XPATH, ".//a[contains(@href, 'aclk') or contains(@href, '/shopping/product')]")
-                            url = link_el.get_attribute("href")
-                        except: continue
+                                    products.append({
+                                        "name": name,
+                                        "price": price_text,
+                                        "seller": seller,
+                                        "city": "",
+                                        "url": url,
+                                        "platform": "google_shopping",
+                                    })
+                                    found_card = True
+                                    break
+                        if found_card: continue
+                    except: continue
 
-                        # 3. Назва (беремо найбільший текстовий блок всередині посилання або h3)
-                        name = ""
-                        try:
-                            name = el.find_element(By.TAG_NAME, "h3").text
-                        except:
-                            # Якщо h3 немає, беремо текст посилання, відсікаючи ціну
-                            name = link_el.text.split("\n")[0].strip()
+                # Додатковий прохід за специфічними класами (якщо попередній щось упустив)
+                specific_cards = driver.find_elements(By.CSS_SELECTOR, ".sh-dgr__content, .sh-np__click-target, .pla-unit, .pla-hovercard-container")
+                for card in specific_cards:
+                    try:
+                        name = card.find_element(By.XPATH, ".//h3 | .//*[@role='heading']").text
+                        price = "Ціна не вказана"
+                        for p_sel in [".a83139c", ".OFFNJ", ".kYv3ub", "span[aria-hidden='true']"]:
+                            try:
+                                p_text = card.find_element(By.CSS_SELECTOR, p_sel).text
+                                if any(d.isdigit() for d in p_text): price = p_text; break
+                            except: pass
                         
-                        if len(name) < 10: # Спробуємо знайти довший текст в блоці
-                            parts = [p.strip() for p in text.split("  ") if len(p.strip()) > 15]
-                            if parts: name = parts[0]
-
-                        if not name or len(name) < 5: continue
-
-                        # 4. Продавець (шукаємо текст після ціни або в окремих мітках)
-                        seller = "Магазин"
-                        # Часто продавець йде після ціни або має окремі класи, спробуємо витягти залишок
-                        clean_text = text.replace(price, "").replace(name, "").strip()
-                        if clean_text:
-                            seller_parts = [p.strip() for p in clean_text.split("·") if p.strip()]
-                            if seller_parts: seller = seller_parts[0]
-
+                        url = card.find_element(By.TAG_NAME, "a").get_attribute("href")
                         products.append({
-                            "name": name[:150].strip(), # Обмежуємо довжину
-                            "price": price,
-                            "seller": seller[:50],
+                            "name": name.strip(),
+                            "price": price.strip(),
+                            "seller": "Магазин", # Буде уточнено AI або з тексту
                             "city": "",
                             "url": url,
                             "platform": "google_shopping",
                         })
-                    except: continue
+                    except: pass
 
-                # Фінальна очистка
-                unique_products = {}
+                # Унікалізація
+                unique = {}
                 for p in products:
-                    # Ключ унікальності - назва + ціна (щоб бачити різні магазини з однаковим товаром)
-                    key = f"{p['name']}_{p['price']}_{p['seller']}"
-                    if key not in unique_products:
-                        unique_products[key] = p
+                    if not p['url'] or len(p['name']) < 5: continue
+                    if p['url'] not in unique: unique[p['url']] = p
                 
-                logger.info(f"✅ ULTRA-GREEDY complete! Found {len(unique_products)} unique items.")
-                return list(unique_products.values())
+                logger.info(f"✅ FOUND {len(unique)} TOTAL ITEMS.")
+                return list(unique.values())
 
             finally:
                 driver.quit()
         except Exception as e:
             logger.error("❌ Critical scraping error: %s", e)
-        
         return products
 
     def search_page(self, query: str, page: int) -> list[dict]:
