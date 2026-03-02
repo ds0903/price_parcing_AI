@@ -584,29 +584,64 @@ async def handle_text(message: Message) -> None:
         return
 
     # ------------------------------------------------------------------ #
-    # search_web_manual: відкрити гугл і вписати запит вручну
+    # search_web_manual: відкрити гугл і пропарсити розділ Shopping
     # ------------------------------------------------------------------ #
     if action == "search_web_manual":
-        # Спершу спробуємо використати оригінальний текст повідомлення без команди
-        # Якщо AI витягнув query добре, беремо його, але якщо він занадто короткий - беремо витягнутий AI запит з контекстом
-        query = intent.get("query", "").strip()
-        
-        # Якщо AI видав порожній запит або ми хочемо бути впевнені, 
-        # витягуємо його ще раз з контексту з новими правилами (збереженням брендів)
-        if not query or len(query.split()) < 2:
-            query = await asyncio.to_thread(agent.extract_search_query, user_id)
+        # AI сам виділяє запит, бренд, вагу тощо.
+        query = await asyncio.to_thread(agent.extract_search_query, user_id, text)
         
         if not query:
-            await message.answer("❓ Що саме шукати в інтернеті?")
+            await message.answer("❓ AI не зміг виділити товар із вашого запиту. Спробуйте написати чіткіше.")
             return
 
-        await message.answer(f"🌐 Відкриваю Google Shopping та шукаю «{query}»...")
+        status_msg = await message.answer(f"🌐 Шукаю «{query}» в Google Shopping...\n⏳ Це займе до 2 хвилин.")
         
         from scraper_web import WebScraper
         web_scraper = WebScraper()
         
-        # Запускаємо синхронний метод у окремому потоці
-        task = asyncio.create_task(asyncio.to_thread(web_scraper.open_google_manual, query))
+        # Функція для виконання пошуку та відправки результатів
+        async def web_search_task():
+            try:
+                # 1. Збираємо "сирі" дані з Google
+                raw_products = await asyncio.to_thread(web_scraper.open_google_manual, query)
+                
+                if not raw_products:
+                    await status_msg.edit_text("😔 Не вдалося знайти товари або виникла помилка доступу.")
+                    return
+
+                await status_msg.edit_text(f"📦 Знайдено {len(raw_products)} пропозицій. Аналізую та фільтрую...")
+
+                # 2. Витягуємо фільтри з контексту для точної перевірки
+                intent = await asyncio.to_thread(agent.classify_intent, user_id, text)
+                filters = intent.get("filters") or {}
+
+                # 3. Фільтруємо через AI
+                filtered = await asyncio.to_thread(
+                    agent.filter_products_by_intent,
+                    user_id, raw_products, query, text, filters
+                )
+
+                if not filtered:
+                    await status_msg.edit_text("❌ Після фільтрації нічого не залишилося. Можливо, товари не відповідають вашим критеріям (бренд, вага).")
+                    return
+
+                # 4. Формуємо аналіз цін та Excel
+                ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, filtered, "Google Shopping")
+                xlsx_bytes = await asyncio.to_thread(build_excel, query, "google_shopping", filtered, ai_analysis)
+                
+                filename = f"google_shopping_{query[:20].replace(' ', '_')}.xlsx"
+                await status_msg.delete()
+                await bot.send_document(
+                    message.chat.id,
+                    BufferedInputFile(xlsx_bytes, filename=filename),
+                    caption=f'📊 Результати з Google Shopping для: "{query}"\n✅ Знайдено та відфільтровано: {len(filtered)} тов.'
+                )
+            except Exception as e:
+                logger.error("Web search task error: %s", e)
+                await status_msg.edit_text("❌ Виникла помилка під час пошуку.")
+
+        # Запускаємо процес
+        task = asyncio.create_task(web_search_task())
         user_tasks[user_id] = task
         return
 

@@ -130,10 +130,10 @@ class GeminiAgent:
             logger.error("classify_intent error: %s | raw=%s", e, locals().get("raw", ""))
             return {"action": "chat", "query": "", "interval_minutes": None, "platforms": []}
 
-    def extract_search_query(self, user_id: int, filter_hint: str = "") -> str:
+    def extract_search_query(self, user_id: int, text: str, filter_hint: str = "") -> str:
         """Extract product name from conversation context, optionally with a filter hint."""
-        hint = f" Користувач уточнив: '{filter_hint}'." if filter_hint else ""
-        prompt = _PROMPTS["extract_search_query"].format(hint=hint)
+        hint = f" Попередній контекст: '{filter_hint}'." if filter_hint else ""
+        prompt = _PROMPTS["extract_search_query"].format(text=text, hint=hint)
         try:
             return self._query_once(user_id, prompt)
         except Exception as e:
