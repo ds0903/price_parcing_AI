@@ -77,15 +77,40 @@ class WebScraper:
                 
                 time.sleep(5)
 
-                # --- Глибокий скролінг ---
-                logger.info("Scrolling to the deep end...")
-                for _ in range(6):
-                    driver.execute_script("window.scrollBy(0, 1200);")
-                    time.sleep(1.5)
+                # --- Нескінченний скролінг до самого низу ---
+                logger.info("Deep scrolling to the absolute bottom...")
+                last_height = driver.execute_script("return document.body.scrollHeight")
+                scroll_attempts = 0
+                max_scrolls = 30 # Ліміт, щоб не зациклитись
+
+                while scroll_attempts < max_scrolls:
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(random.uniform(2, 3)) # Чекаємо на підвантаження
+                    
+                    # Перевіряємо кнопку "Показати більше"
                     try:
-                        btn = driver.find_element(By.CSS_SELECTOR, "button:contains('Показати більше'), .GN77nd")
-                        if btn.is_displayed(): btn.click()
+                        more_btn = driver.find_element(By.CSS_SELECTOR, "button.GN77nd, .m67it, button:contains('Показати більше')")
+                        if more_btn.is_displayed():
+                            logger.info("Found 'Show more' button, clicking...")
+                            driver.execute_script("arguments[0].click();", more_btn)
+                            time.sleep(2)
                     except: pass
+
+                    new_height = driver.execute_script("return document.body.scrollHeight")
+                    if new_height == last_height:
+                        # Спробуємо ще раз трохи проскролити вгору-вниз для впевненості
+                        driver.execute_script("window.scrollBy(0, -300);")
+                        time.sleep(0.5)
+                        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                        time.sleep(2)
+                        new_height = driver.execute_script("return document.body.scrollHeight")
+                        if new_height == last_height:
+                            logger.info("Reached the end of the page.")
+                            break
+                    
+                    last_height = new_height
+                    scroll_attempts += 1
+                    logger.info(f"Scroll attempt {scroll_attempts} completed...")
 
                 # --- ULTRA-GREEDY EXTRACTION ---
                 logger.info("Extracting EVERYTHING that looks like a product...")
