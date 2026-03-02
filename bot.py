@@ -279,11 +279,28 @@ async def _collect_excel_results(
         # Програмна фільтрація по ціні (швидко, до AI)
         raw = _filter_by_price(raw, filters or {})
 
+        # --- LOG: що прийшло зі скрапера ---
+        print(f"\n{'='*60}")
+        print(f"[SCRAPER] Запит: '{query}' | Платформа: {platform}")
+        print(f"[SCRAPER] Сторінки {page-2}-{page-1} | Знайдено: {len(raw)} товарів")
+        for i, p in enumerate(raw, 1):
+            print(f"  {i:>3}. {p.get('name','?')[:70]} | {p.get('price','?')}")
+        print(f"{'='*60}")
+
         # Фільтрація поточної пари (Gemini працює поки браузери тягнуть наступну)
         batch = await asyncio.to_thread(
             agent.filter_products_by_intent,
             user_id, raw, query, filter_intent, filters or {},
         )
+
+        # --- LOG: що залишив AI ---
+        kept_names = {p.get('name') for p in batch}
+        print(f"[AI FILTER] Залишив: {len(batch)} з {len(raw)}")
+        for i, p in enumerate(raw, 1):
+            name = p.get('name', '?')
+            status = "✅ ЗАЛИШИВ" if name in kept_names else "❌ ВІДРІЗАВ"
+            print(f"  {i:>3}. [{status}] {name[:70]} | {p.get('price','?')}")
+        print(f"{'='*60}\n")
 
         for product in batch:
             uid = product.get("product_id") or product.get("url") or ""

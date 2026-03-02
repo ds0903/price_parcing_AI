@@ -224,11 +224,17 @@ class GeminiAgent:
             strictness=strictness,
             lines=lines
         )
+        print(f"\n[AI] Режим: {'СУВОРИЙ' if has_strict else 'ШИРОКИЙ'} | Товарів на вхід: {len(products)}")
+        print(f"[AI] filter_intent: '{filter_intent[:80] if filter_intent else ''}'")
+        print(f"[AI] filters: {filters}")
         try:
             reply = self._query_once(user_id, prompt).strip().lower()
+            print(f"[AI] Відповідь Gemini: '{reply}'")
             if "all" in reply:
+                print("[AI] → Залишає ВСІ")
                 return products
             if reply == "0" or not reply:
+                print("[AI] → Відкидає ВСІ")
                 return []
             indices = []
             for part in reply.replace(";", ",").split(","):
@@ -237,7 +243,9 @@ class GeminiAgent:
                     idx = int(part) - 1
                     if 0 <= idx < len(products):
                         indices.append(idx)
-            return [products[i] for i in indices] if indices else products
+            result = [products[i] for i in indices] if indices else products
+            print(f"[AI] → Обрані індекси: {[i+1 for i in indices]} | Результат: {len(result)} товарів")
+            return result
         except Exception as e:
             logger.error("filter_products_by_intent error: %s", e)
             return products
