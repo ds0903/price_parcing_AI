@@ -1,3 +1,5 @@
 .env
 .venv
 .idea
+browser_profiles
+browser_session

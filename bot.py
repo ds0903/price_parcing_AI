@@ -601,8 +601,8 @@ async def handle_text(message: Message) -> None:
         from scraper_web import WebScraper
         web_scraper = WebScraper()
         
-        # Запускаємо асинхронно та зберігаємо посилання на задачу
-        task = asyncio.create_task(web_scraper.open_google_manual(query))
+        # Запускаємо синхронний метод у окремому потоці
+        task = asyncio.create_task(asyncio.to_thread(web_scraper.open_google_manual, query))
         user_tasks[user_id] = task
         return
 
