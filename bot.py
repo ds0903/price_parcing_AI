@@ -587,16 +587,20 @@ async def handle_text(message: Message) -> None:
     # search_web_manual: відкрити гугл і вписати запит вручну
     # ------------------------------------------------------------------ #
     if action == "search_web_manual":
+        # Спершу спробуємо використати оригінальний текст повідомлення без команди
+        # Якщо AI витягнув query добре, беремо його, але якщо він занадто короткий - беремо витягнутий AI запит з контекстом
         query = intent.get("query", "").strip()
-        if not query:
-            # Якщо запит не знайдено в намірі, спробуємо витягти з контексту
+        
+        # Якщо AI видав порожній запит або ми хочемо бути впевнені, 
+        # витягуємо його ще раз з контексту з новими правилами (збереженням брендів)
+        if not query or len(query.split()) < 2:
             query = await asyncio.to_thread(agent.extract_search_query, user_id)
         
         if not query:
             await message.answer("❓ Що саме шукати в інтернеті?")
             return
 
-        await message.answer(f"🌐 Відкриваю Google та шукаю «{query}» з імітацією людини...")
+        await message.answer(f"🌐 Відкриваю Google Shopping та шукаю «{query}»...")
         
         from scraper_web import WebScraper
         web_scraper = WebScraper()

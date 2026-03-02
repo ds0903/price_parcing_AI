@@ -170,7 +170,9 @@ class GeminiAgent:
             hard_rules.append(f"— Ціна НЕ БІЛЬШЕ {f['price_max']} грн")
         if f.get("brand"):
             hard_rules.append(f"— Бренд/модель ОБОВ'ЯЗКОВО: {f['brand']}")
-        hard_block = ("ОБОВ'ЯЗКОВІ числові вимоги (відкидай якщо не відповідає):\n"
+        if f.get("subtype"):
+            hard_rules.append(f"— Підвид/Тип ОБОВ'ЯЗКОВО: {f['subtype']}")
+        hard_block = ("ОБОВ'ЯЗКОВІ числові та якісні вимоги (відкидай якщо не відповідає):\n"
                       + "\n".join(hard_rules) + "\n") if hard_rules else ""
 
         # Чи є жорсткі уточнення (тип, підвид, вікова група тощо)?
