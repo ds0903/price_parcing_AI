@@ -602,43 +602,54 @@ async def handle_text(message: Message) -> None:
         # Функція для виконання пошуку та відправки результатів
         async def web_search_task():
             try:
-                # 1. Збираємо "сирі" дані з Google
-                raw_products = await asyncio.to_thread(web_scraper.open_google_manual, query)
+                # 1. Збираємо "сирі" дані (текстові блоки + URL)
+                raw_blocks_data = await asyncio.to_thread(web_scraper.open_google_manual, query)
                 
-                if not raw_products:
+                if not raw_blocks_data:
                     await status_msg.edit_text("😔 Не вдалося знайти товари або виникла помилка доступу.")
                     return
 
-                await status_msg.edit_text(f"📦 Знайдено {len(raw_products)} пропозицій. Аналізую та фільтрую...")
+                await status_msg.edit_text(f"📦 Знайдено {len(raw_blocks_data)} карток. AI розпізнає ціни та магазини...")
 
-                # 2. Витягуємо фільтри з контексту для точної перевірки
+                # Витягуємо лише текст блоків для AI
+                raw_texts = [b["raw_text"] for b in raw_blocks_data]
+                
+                # 2. Витягуємо фільтри з контексту
                 intent = await asyncio.to_thread(agent.classify_intent, user_id, text)
                 filters = intent.get("filters") or {}
 
-                # 3. Фільтруємо через AI
-                filtered = await asyncio.to_thread(
-                    agent.filter_products_by_intent,
-                    user_id, raw_products, query, text, filters
+                # 3. AI парсить сирий текст у структуровані товари
+                parsed_products = await asyncio.to_thread(
+                    agent.parse_raw_shopping_data,
+                    user_id, raw_texts, query, filters
                 )
 
-                if not filtered:
-                    await status_msg.edit_text("❌ Після фільтрації нічого не залишилося. Можливо, товари не відповідають вашим критеріям (бренд, вага).")
+                # Додаємо URL назад до розпарсених товарів (співставляємо за індексом)
+                final_filtered = []
+                for i, p in enumerate(parsed_products):
+                    if i < len(raw_blocks_data) and p.get("match"):
+                        p["url"] = raw_blocks_data[i]["url"]
+                        p["platform"] = "google_shopping"
+                        final_filtered.append(p)
+
+                if not final_filtered:
+                    await status_msg.edit_text("❌ AI не знайшов товарів, що відповідають вашому запиту.")
                     return
 
-                # 4. Формуємо аналіз цін та Excel
-                ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, filtered, "Google Shopping")
-                xlsx_bytes = await asyncio.to_thread(build_excel, query, "google_shopping", filtered, ai_analysis)
+                # 4. Формуємо аналіз та Excel
+                ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, final_filtered, "Google Shopping")
+                xlsx_bytes = await asyncio.to_thread(build_excel, query, "google_shopping", final_filtered, ai_analysis)
                 
                 filename = f"google_shopping_{query[:20].replace(' ', '_')}.xlsx"
                 await status_msg.delete()
                 await bot.send_document(
                     message.chat.id,
                     BufferedInputFile(xlsx_bytes, filename=filename),
-                    caption=f'📊 Результати з Google Shopping для: "{query}"\n✅ Знайдено та відфільтровано: {len(filtered)} тов.'
+                    caption=f'📊 Результати з Google Shopping для: "{query}"\n✅ Знайдено та розпізнано: {len(final_filtered)} тов.'
                 )
             except Exception as e:
                 logger.error("Web search task error: %s", e)
-                await status_msg.edit_text("❌ Виникла помилка під час пошуку.")
+                await status_msg.edit_text("❌ Виникла помилка під час обробки даних AI.")
 
         # Запускаємо процес
         task = asyncio.create_task(web_search_task())

@@ -145,6 +145,40 @@ class GeminiAgent:
         self._append(user_id, "user", text)
         self._append(user_id, "model", "Зрозумів, шукаю.")
 
+    def parse_raw_shopping_data(self, user_id: int, raw_blocks: list[str], query: str, filters: dict) -> list[dict]:
+        """AI перетворює список сирих текстових блоків у структуровані товари."""
+        if not raw_blocks:
+            return []
+            
+        # Групуємо блоки, щоб не робити занадто багато запитів (по 10 блоків)
+        all_parsed = []
+        batch_size = 10
+        
+        for i in range(0, len(raw_blocks), batch_size):
+            batch = raw_blocks[i:i + batch_size]
+            raw_text_combined = "\n---\n".join(batch)
+            
+            prompt = _PROMPTS["parse_raw_shopping_data"].format(
+                query=query,
+                filters=json.dumps(filters, ensure_ascii=False),
+                raw_text=raw_text_combined
+            )
+            
+            try:
+                reply = self._query_once(user_id, prompt).strip()
+                # Прибираємо markdown
+                if reply.startswith("```"):
+                    reply = reply.split("```")[1]
+                    if reply.startswith("json"): reply = reply[4:]
+                
+                parsed_batch = json.loads(reply)
+                if isinstance(parsed_batch, list):
+                    all_parsed.extend(parsed_batch)
+            except Exception as e:
+                logger.error("parse_raw_shopping_data batch error: %s", e)
+                
+        return all_parsed
+
     def filter_products_by_intent(
         self, user_id: int, products: list[dict], query: str,
         filter_intent: str = "", filters: dict | None = None,
