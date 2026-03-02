@@ -43,6 +43,18 @@ scheduled_tasks: dict[int, asyncio.Task] = {}
 
 FILTER_QUALIFIERS = {"лише", "тільки", "лиш", "саме"}
 
+GROUP_LABELS = {
+    "Adult":      "Adult — для дорослих котів",
+    "Sterilized": "Sterilized — для стерилізованих",
+    "Kitten":     "Kitten — для кошенят",
+    "Senior":     "Senior — для літніх котів (7+)",
+    "Hairball":   "Hairball Control — виведення шерсті",
+    "Sensitive":  "Sensitive — чутливе травлення",
+    "Indoor":     "Indoor — для домашніх котів",
+    "Інше":       "Інше",
+}
+GROUP_ORDER = ["Adult", "Sterilized", "Kitten", "Senior", "Hairball", "Sensitive", "Indoor", "Інше"]
+
 
 # ------------------------------------------------------------------ #
 #  Keyboards                                                           #
@@ -87,35 +99,32 @@ def format_chat(query: str, platform: str, products: list[dict], ai_analysis: st
 
 
 def build_excel(query: str, platform: str, products: list[dict], ai_analysis: str) -> bytes:
-    """Single sheet: info header → product table → AI analysis at the bottom."""
-    # Сортування від дешевших до дорожчих (товари без ціни — в кінець)
+    """Single sheet: title → column headers → [grouped or flat] products → AI analysis."""
+    from collections import defaultdict
+
     def _price_key(p: dict) -> int:
         digits = re.sub(r"[^\d]", "", p.get("price", ""))
         return int(digits) if digits else 10 ** 9
 
-    products = sorted(products, key=_price_key)
+    has_groups = any(p.get("group") for p in products)
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Результати"
 
-    # Rozetka: тільки назва/ціна/посилання (без продавця і міста)
-    # OLX: без продавця, але з містом
-    # Решта: повний набір колонок
     show_seller = platform not in ("olx", "rozetka")
     show_city   = platform != "rozetka"
-    # Columns: №, Назва, Ціна, [Продавець], [Місто], Посилання, Платформа
     if show_seller and show_city:
         col_widths = [5, 60, 28, 28, 22, 28, 16]
         headers    = ["№", "Назва", "Ціна", "Продавець", "Місто", "Посилання", "Платформа"]
         last_col   = "G"
         n_cols     = 7
-    elif show_city:  # OLX: no seller, has city
+    elif show_city:
         col_widths = [5, 65, 28, 25, 30, 16]
         headers    = ["№", "Назва", "Ціна", "Місто", "Посилання", "Платформа"]
         last_col   = "F"
         n_cols     = 6
-    else:  # Rozetka: no seller, no city
+    else:
         col_widths = [5, 70, 30, 32, 16]
         headers    = ["№", "Назва", "Ціна", "Посилання", "Платформа"]
         last_col   = "E"
@@ -124,26 +133,29 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     for col, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(1, col).column_letter].width = w
 
-    blue_fill  = PatternFill("solid", fgColor="1F4E79")
-    white_font = Font(color="FFFFFF", bold=True)
-    alt_fill   = PatternFill("solid", fgColor="D6E4F0")
-    ai_fill    = PatternFill("solid", fgColor="E2EFDA")
-    bold_font  = Font(bold=True)
-    link_font  = Font(color="0563C1", underline="single")
-    center     = Alignment(horizontal="center", vertical="center")
-    wrap       = Alignment(wrap_text=True, vertical="top")
+    # --- Styles ---
+    blue_fill    = PatternFill("solid", fgColor="1F4E79")
+    group_fill   = PatternFill("solid", fgColor="2E75B6")
+    summary_fill = PatternFill("solid", fgColor="FFF2CC")
+    alt_fill     = PatternFill("solid", fgColor="D6E4F0")
+    ai_fill      = PatternFill("solid", fgColor="E2EFDA")
+    white_font   = Font(color="FFFFFF", bold=True)
+    bold_font    = Font(bold=True)
+    link_font    = Font(color="0563C1", underline="single")
+    center       = Alignment(horizontal="center", vertical="center")
+    wrap         = Alignment(wrap_text=True, vertical="top")
 
     # --- Row 1: title ---
     ws.merge_cells(f"A1:{last_col}1")
-    title_cell = ws["A1"]
-    title_cell.value = (
+    tc = ws["A1"]
+    tc.value = (
         f'Пошук: "{query}"  |  '
         f'Платформа: {PLATFORM_LABELS.get(platform, platform)}  |  '
         f'Дата: {datetime.now().strftime("%d.%m.%Y %H:%M")}'
     )
-    title_cell.font = Font(bold=True, size=12, color="FFFFFF")
-    title_cell.fill = blue_fill
-    title_cell.alignment = center
+    tc.font = Font(bold=True, size=12, color="FFFFFF")
+    tc.fill = blue_fill
+    tc.alignment = center
     ws.row_dimensions[1].height = 22
 
     # --- Row 2: column headers ---
@@ -153,42 +165,94 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
         cell.fill = blue_fill
         cell.alignment = center
 
-    # --- Rows 3+: products ---
-    for i, p in enumerate(products, 3):
+    # --- Helper: render one product row ---
+    def render_row(row: int, num: int, p: dict, is_alt: bool) -> None:
         col = 1
-        ws.cell(row=i, column=col, value=i - 2).alignment = center;  col += 1
-        ws.cell(row=i, column=col, value=p.get("name", "")).alignment = wrap;  col += 1
-        ws.cell(row=i, column=col, value=p.get("price", "")).alignment = center;  col += 1
+        ws.cell(row=row, column=col, value=num).alignment = center;          col += 1
+        ws.cell(row=row, column=col, value=p.get("name", "")).alignment = wrap; col += 1
+        ws.cell(row=row, column=col, value=p.get("price", "")).alignment = center; col += 1
         if show_seller:
-            ws.cell(row=i, column=col, value=p.get("seller", "")).alignment = wrap;  col += 1
+            ws.cell(row=row, column=col, value=p.get("seller", "")).alignment = wrap; col += 1
         if show_city:
-            ws.cell(row=i, column=col, value=p.get("city", "")).alignment = wrap;  col += 1
-
+            ws.cell(row=row, column=col, value=p.get("city", "")).alignment = wrap;  col += 1
         url = p.get("url", "")
-        link_cell = ws.cell(row=i, column=col, value="Відкрити →" if url else "")
+        lc = ws.cell(row=row, column=col, value="Відкрити →" if url else "")
         if url:
-            link_cell.hyperlink = url
-            link_cell.font = link_font
-        link_cell.alignment = center;  col += 1
-
-        ws.cell(row=i, column=col, value=PLATFORM_LABELS.get(p.get("platform", platform), platform)).alignment = center
-
-        if i % 2 == 0:
+            lc.hyperlink = url
+            lc.font = link_font
+        lc.alignment = center; col += 1
+        ws.cell(row=row, column=col,
+                value=PLATFORM_LABELS.get(p.get("platform", platform), platform)).alignment = center
+        if is_alt:
             for c in range(1, n_cols + 1):
-                ws.cell(row=i, column=c).fill = alt_fill
+                ws.cell(row=row, column=c).fill = alt_fill
 
-    # --- Separator row ---
-    sep_row = len(products) + 3
-    ws.row_dimensions[sep_row].height = 8
+    current_row = 3
 
-    # --- AI Analysis block ---
-    ai_start = sep_row + 1
+    if has_groups:
+        # --- GROUPED rendering ---
+        grouped: dict = defaultdict(list)
+        for p in products:
+            grouped[p.get("group", "Інше")].append(p)
 
+        for group_key in GROUP_ORDER:
+            if group_key not in grouped:
+                continue
+            gp = sorted(grouped[group_key], key=_price_key)
+            label = GROUP_LABELS.get(group_key, group_key)
+
+            # Group header
+            ws.merge_cells(f"A{current_row}:{last_col}{current_row}")
+            gh = ws.cell(row=current_row, column=1,
+                         value=f"▶  {label}  ({len(gp)} товарів)")
+            gh.font = Font(bold=True, size=11, color="FFFFFF")
+            gh.fill = group_fill
+            gh.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            ws.row_dimensions[current_row].height = 20
+            current_row += 1
+
+            # Products
+            for i, p in enumerate(gp, 1):
+                render_row(current_row, i, p, i % 2 == 0)
+                current_row += 1
+
+            # Summary row
+            nums = [int(re.sub(r"[^\d]", "", p.get("price", "")))
+                    for p in gp if re.sub(r"[^\d]", "", p.get("price", ""))]
+            if nums:
+                summary = (
+                    f"  Мін: {min(nums):,} грн   |   "
+                    f"Макс: {max(nums):,} грн   |   "
+                    f"Середня: {sum(nums)/len(nums):,.0f} грн"
+                ).replace(",", " ")
+            else:
+                summary = "  Ціни недоступні"
+            ws.merge_cells(f"A{current_row}:{last_col}{current_row}")
+            sc = ws.cell(row=current_row, column=1, value=f"📊{summary}")
+            sc.font = Font(bold=True, size=10)
+            sc.fill = summary_fill
+            sc.alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[current_row].height = 18
+            current_row += 1
+
+            # Separator
+            ws.row_dimensions[current_row].height = 8
+            current_row += 1
+
+    else:
+        # --- FLAT rendering (fallback) ---
+        for i, p in enumerate(sorted(products, key=_price_key), 3):
+            render_row(i, i - 2, p, i % 2 == 0)
+        current_row = len(products) + 3
+
+    # --- AI Analysis ---
+    ws.row_dimensions[current_row].height = 8
+    ai_start = current_row + 1
     ws.merge_cells(f"A{ai_start}:{last_col}{ai_start}")
-    header_cell = ws.cell(row=ai_start, column=1, value="📊 AI Аналіз")
-    header_cell.font = Font(bold=True, size=11, color="FFFFFF")
-    header_cell.fill = blue_fill
-    header_cell.alignment = center
+    hc = ws.cell(row=ai_start, column=1, value="📊 AI Аналіз")
+    hc.font = Font(bold=True, size=11, color="FFFFFF")
+    hc.fill = blue_fill
+    hc.alignment = center
 
     for offset, line in enumerate(ai_analysis.splitlines(), 1):
         row_idx = ai_start + offset
@@ -197,8 +261,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
         cell.fill = ai_fill
         cell.font = bold_font if line.strip().startswith("•") else Font()
         cell.alignment = Alignment(wrap_text=True, vertical="center", indent=1)
-        line_count = max(1, math.ceil(len(line) / 120))
-        ws.row_dimensions[row_idx].height = line_count * 15
+        ws.row_dimensions[row_idx].height = max(1, math.ceil(len(line) / 120)) * 15
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -324,6 +387,7 @@ async def _search_one_platform(
 ) -> None:
     """Збирає та надсилає Excel для однієї платформи."""
     products = await _collect_excel_results(user_id, query, platform, filter_intent)
+    products = await asyncio.to_thread(agent.group_products_by_subtype, user_id, products)
     ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, products, platform)
     xlsx_bytes = await asyncio.to_thread(build_excel, query, platform, products, ai_analysis)
     filename = f"price_{query[:25].replace(' ', '_')}_{platform}.xlsx"
@@ -354,6 +418,7 @@ async def do_search(
 
     # Формуємо і надсилаємо Excel по черзі (щоб не флудити одночасно)
     for platform, products in zip(platforms, results_list):
+        products = await asyncio.to_thread(agent.group_products_by_subtype, user_id, products)
         ai_analysis = await asyncio.to_thread(
             agent.analyze_prices, user_id, query, products, platform
         )

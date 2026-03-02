@@ -179,6 +179,35 @@ class GeminiAgent:
                 
         return all_parsed
 
+    def group_products_by_subtype(self, user_id: int, products: list[dict]) -> list[dict]:
+        """AI присвоює кожному товару групу-підвид."""
+        if not products:
+            return products
+        lines = "\n".join(f"{i}. {p['name']}" for i, p in enumerate(products, 1))
+        prompt = _PROMPTS["group_products"].format(lines=lines)
+        print(f"\n[GROUPING] Групую {len(products)} товарів...")
+        try:
+            reply = self._query_once(user_id, prompt).strip()
+            if reply.startswith("```"):
+                reply = reply.split("```")[1]
+                if reply.startswith("json"):
+                    reply = reply[4:]
+            groups = json.loads(reply.strip())
+            for item in groups:
+                idx = item.get("index", 0) - 1
+                if 0 <= idx < len(products):
+                    products[idx]["group"] = item.get("group", "Інше")
+            counts = {}
+            for p in products:
+                g = p.get("group", "Інше")
+                counts[g] = counts.get(g, 0) + 1
+            print(f"[GROUPING] Результат: {counts}")
+        except Exception as e:
+            logger.error("group_products_by_subtype error: %s", e)
+            for p in products:
+                p.setdefault("group", "Інше")
+        return products
+
     def filter_products_by_intent(
         self, user_id: int, products: list[dict], query: str,
         filter_intent: str = "", filters: dict | None = None,
