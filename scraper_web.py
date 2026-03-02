@@ -70,45 +70,48 @@ class WebScraper:
             driver = uc.Chrome(options=options, use_subprocess=True, version_main=chrome_version)
             
             try:
-                logger.info("Navigating to Google...")
-                driver.get("https://www.google.com.ua")
+                logger.info("Navigating to Google Shopping...")
+                driver.get("https://www.google.com.ua/shopping")
                 
                 # Рандомна затримка після завантаження
                 time.sleep(random.uniform(2, 4))
 
-                # Пошук поля
-                # В UC ми використовуємо стандартні методи Selenium
+                # Пошук поля (в Shopping воно зазвичай має назву 'q' або 'textarea')
                 from selenium.webdriver.common.by import By
                 from selenium.webdriver.support.ui import WebDriverWait
                 from selenium.webdriver.support import expected_conditions as EC
 
                 try:
-                    search_box = WebDriverWait(driver, 10).until(
-                        EC.visibility_of_element_located((By.NAME, "q"))
+                    # Шукаємо поле пошуку
+                    search_box = WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.NAME, "q"))
                     )
                 except Exception:
-                    logger.info("Search box not found immediately, might be CAPTCHA. Waiting 60s...")
-                    search_box = WebDriverWait(driver, 60).until(
-                        EC.visibility_of_element_located((By.NAME, "q"))
+                    logger.info("Search box not found on Shopping page, trying alternative selectors...")
+                    search_box = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "textarea, input[type='text']"))
                     )
 
                 # Імітація кліку
                 search_box.click()
-                time.sleep(random.uniform(0.5, 1.5))
+                time.sleep(random.uniform(0.8, 1.8))
 
                 # Друкуємо як людина
+                logger.info(f"Typing query in Shopping: {query}")
                 for char in query:
                     search_box.send_keys(char)
-                    time.sleep(random.uniform(0.1, 0.3))
+                    time.sleep(random.uniform(0.1, 0.35))
                 
-                time.sleep(random.uniform(0.5, 1.2))
-                search_box.submit() # Натискаємо Enter
+                time.sleep(random.uniform(0.7, 1.5))
+                search_box.submit()
 
-                # Скролінг результатів
-                time.sleep(3)
-                driver.execute_script(f"window.scrollBy(0, {random.randint(300, 700)});")
+                # Скролінг результатів покупок
+                time.sleep(random.uniform(3, 5))
+                for _ in range(random.randint(2, 4)):
+                    driver.execute_script(f"window.scrollBy(0, {random.randint(400, 900)});")
+                    time.sleep(random.uniform(1, 2))
                 
-                logger.info("Search complete. Keeping browser open for 10 minutes.")
+                logger.info("Shopping search complete. Keeping browser open.")
                 time.sleep(600)
 
             finally:
