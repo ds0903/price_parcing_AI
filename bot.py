@@ -98,13 +98,21 @@ def format_chat(query: str, platform: str, products: list[dict], ai_analysis: st
     return "\n".join(lines)
 
 
+def _parse_price_int(price_str: str) -> int | None:
+    """'2 864.20₴' → 2864,  '1 500 грн' → 1500,  'Ціна не вказана' → None"""
+    s = re.sub(r"[^\d\s.]", "", price_str).strip()   # залишаємо цифри, пробіли, крапку
+    s = re.sub(r"\s+", "", s)                         # прибираємо пробіли-розділювачі тисяч
+    s = s.split(".")[0]                               # беремо тільки цілу частину
+    return int(s) if s.isdigit() else None
+
+
 def build_excel(query: str, platform: str, products: list[dict], ai_analysis: str) -> bytes:
     """Single sheet: title → column headers → [grouped or flat] products → AI analysis."""
     from collections import defaultdict
 
     def _price_key(p: dict) -> int:
-        digits = re.sub(r"[^\d]", "", p.get("price", ""))
-        return int(digits) if digits else 10 ** 9
+        n = _parse_price_int(p.get("price", ""))
+        return n if n is not None else 10 ** 9
 
     has_groups = any(p.get("group") for p in products)
 
@@ -172,7 +180,9 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
         ws.cell(row=row, column=col, value=p.get("name", "")).alignment = wrap; col += 1
         ws.cell(row=row, column=col, value=p.get("price", "")).alignment = center; col += 1
         if show_seller:
-            ws.cell(row=row, column=col, value=p.get("seller", "")).alignment = wrap; col += 1
+            seller = p.get("seller", "")
+            seller = seller[:30] + "…" if len(seller) > 30 else seller
+            ws.cell(row=row, column=col, value=seller).alignment = wrap; col += 1
         if show_city:
             ws.cell(row=row, column=col, value=p.get("city", "")).alignment = wrap;  col += 1
         url = p.get("url", "")
@@ -217,8 +227,7 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
                 current_row += 1
 
             # Summary row
-            nums = [int(re.sub(r"[^\d]", "", p.get("price", "")))
-                    for p in gp if re.sub(r"[^\d]", "", p.get("price", ""))]
+            nums = [n for p in gp if (n := _parse_price_int(p.get("price", ""))) is not None]
             if nums:
                 summary = (
                     f"  Мін: {min(nums):,} грн   |   "
@@ -280,11 +289,10 @@ def _filter_by_price(products: list[dict], filters: dict) -> list[dict]:
         return products
     result = []
     for p in products:
-        digits = re.sub(r"[^\d]", "", p.get("price", ""))
-        if not digits:
+        price = _parse_price_int(p.get("price", ""))
+        if price is None:
             result.append(p)  # ціна невідома — не відкидаємо
             continue
-        price = int(digits)
         if price_min is not None and price < price_min:
             continue
         if price_max is not None and price > price_max:
