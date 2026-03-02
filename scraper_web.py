@@ -18,22 +18,17 @@ PLATFORM = "web"
 
 
 class WebScraper:
-    """Search across the whole internet via DuckDuckGo and Google Shopping (Scraping)."""
+    """Ultra-Greedy Search across Google Shopping (Scrapes EVERYTHING)."""
 
     def _rotate_proxy_ip(self) -> None:
-        """Calls the rotate URL to change mobile proxy IP if configured and enabled."""
         if PROXY_ENABLED and PROXY_ROTATE_ENABLED and PROXY_ROTATE_URL:
             try:
-                logger.info("Rotating proxy IP...")
-                response = httpx.get(PROXY_ROTATE_URL, timeout=10)
-                logger.info("IP rotation response: %s", response.text.strip())
+                httpx.get(PROXY_ROTATE_URL, timeout=10)
                 time.sleep(2) 
-            except Exception as e:
-                logger.error("Failed to rotate IP: %s", e)
+            except: pass
 
     def open_google_manual(self, query: str) -> list[dict]:
-        """Opens Google Shopping, scrolls to bottom, parses ALL items and returns them."""
-        logger.info("Starting manual Google Shopping scraping for: %s", query)
+        logger.info("🚀 Starting ULTRA-GREEDY Google Shopping scraping for: %s", query)
         products = []
         try:
             self._rotate_proxy_ip()
@@ -46,12 +41,12 @@ class WebScraper:
             options.add_argument(f"--user-data-dir={user_data_dir}")
             options.add_argument("--disable-notifications")
             options.add_argument("--lang=uk-UA")
+            options.add_argument("--start-maximized")
             
             if PROXY_ENABLED and PROXY_URL:
                 from urllib.parse import urlparse
                 parsed = urlparse(PROXY_URL)
-                proxy_addr = f"{parsed.hostname}:{parsed.port}"
-                options.add_argument(f'--proxy-server={proxy_addr}')
+                options.add_argument(f'--proxy-server={parsed.hostname}:{parsed.port}')
 
             import subprocess
             def get_chrome_version():
@@ -64,91 +59,107 @@ class WebScraper:
             driver = uc.Chrome(options=options, use_subprocess=True, version_main=get_chrome_version())
             
             try:
-                logger.info("Navigating to Google Shopping...")
                 driver.get("https://www.google.com.ua/shopping")
-                time.sleep(random.uniform(2, 4))
+                time.sleep(3)
 
+                # Пошук та ввід
                 try:
-                    search_box = WebDriverWait(driver, 15).until(
-                        EC.presence_of_element_located((By.NAME, "q"))
-                    )
+                    sb = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.NAME, "q")))
                 except:
-                    search_box = driver.find_element(By.CSS_SELECTOR, "textarea, input[type='text']")
-
-                search_box.click()
-                time.sleep(random.uniform(0.5, 1.0))
+                    sb = driver.find_element(By.CSS_SELECTOR, "textarea, input[type='text']")
+                
+                sb.click()
+                sb.clear()
                 for char in query:
-                    search_box.send_keys(char)
-                    time.sleep(random.uniform(0.05, 0.2))
-                search_box.submit()
+                    sb.send_keys(char)
+                    time.sleep(random.uniform(0.05, 0.15))
+                sb.submit()
                 
-                time.sleep(random.uniform(4, 6))
+                time.sleep(5)
 
-                # --- Поступовий скролінг та збір ---
-                logger.info("Scrolling and parsing items...")
-                
-                for _ in range(5): # Зробимо 5 великих скролів
-                    driver.execute_script("window.scrollBy(0, 1000);")
-                    time.sleep(2)
-                    
-                    # Спробуємо натиснути "Показати більше" якщо є
+                # --- Глибокий скролінг ---
+                logger.info("Scrolling to the deep end...")
+                for _ in range(6):
+                    driver.execute_script("window.scrollBy(0, 1200);")
+                    time.sleep(1.5)
                     try:
-                        more_btn = driver.find_element(By.CSS_SELECTOR, "button.GN77nd, .m67it")
-                        if more_btn.is_displayed():
-                            more_btn.click()
-                            time.sleep(2)
+                        btn = driver.find_element(By.CSS_SELECTOR, "button:contains('Показати більше'), .GN77nd")
+                        if btn.is_displayed(): btn.click()
                     except: pass
 
-                # Парсимо всі знайдені картки
-                cards = driver.find_elements(By.CSS_SELECTOR, "div.sh-dgr__content, div.sh-dgr__grid-result, .sh-np__click-target")
+                # --- ULTRA-GREEDY EXTRACTION ---
+                logger.info("Extracting EVERYTHING that looks like a product...")
                 
-                for card in cards:
+                # Ми шукаємо всі блоки, в яких є посилання на товар та ціна
+                # Google використовує aclk для реклами і /shopping/product для звичайних
+                elements = driver.find_elements(By.XPATH, "//div[.//a[contains(@href, 'aclk') or contains(@href, '/shopping/product')]]")
+                
+                logger.info(f"Analyzing {len(elements)} potential blocks...")
+
+                for el in elements:
                     try:
-                        name = card.find_element(By.TAG_NAME, "h3").text
-                        if not name: continue
+                        text = el.text.replace("\n", " ").strip()
+                        if not text: continue
 
-                        # Розширені селектори для ціни
-                        price = "Ціна не вказана"
-                        for p_sel in [".a83139c", ".OFFNJ", ".kYv3ub", "span[aria-hidden='true']"]:
-                            try:
-                                p_text = card.find_element(By.CSS_SELECTOR, p_sel).text
-                                if "грн" in p_text or any(d.isdigit() for d in p_text):
-                                    price = p_text
-                                    break
-                            except: pass
+                        # 1. Шукаємо ціну через Regex (цифри + грн/₴)
+                        price_match = re.search(r'(\d[\d\s,]{0,10})\s*(грн|₴|грн\.)', text, re.I)
+                        if not price_match: continue # Якщо немає ціни - це не товар
+                        
+                        price = price_match.group(0).strip()
 
-                        # Розширені селектори для продавця
-                        seller = "Інтернет-магазин"
-                        for s_sel in [".I_9096", ".aULzUe", ".sh-np__seller-container", ".E5uYIc"]:
-                            try:
-                                s_text = card.find_element(By.CSS_SELECTOR, s_sel).text
-                                if s_text:
-                                    seller = s_text
-                                    break
-                            except: pass
+                        # 2. Шукаємо посилання
+                        try:
+                            link_el = el.find_element(By.XPATH, ".//a[contains(@href, 'aclk') or contains(@href, '/shopping/product')]")
+                            url = link_el.get_attribute("href")
+                        except: continue
 
-                        url = card.find_element(By.TAG_NAME, "a").get_attribute("href")
+                        # 3. Назва (беремо найбільший текстовий блок всередині посилання або h3)
+                        name = ""
+                        try:
+                            name = el.find_element(By.TAG_NAME, "h3").text
+                        except:
+                            # Якщо h3 немає, беремо текст посилання, відсікаючи ціну
+                            name = link_el.text.split("\n")[0].strip()
+                        
+                        if len(name) < 10: # Спробуємо знайти довший текст в блоці
+                            parts = [p.strip() for p in text.split("  ") if len(p.strip()) > 15]
+                            if parts: name = parts[0]
+
+                        if not name or len(name) < 5: continue
+
+                        # 4. Продавець (шукаємо текст після ціни або в окремих мітках)
+                        seller = "Магазин"
+                        # Часто продавець йде після ціни або має окремі класи, спробуємо витягти залишок
+                        clean_text = text.replace(price, "").replace(name, "").strip()
+                        if clean_text:
+                            seller_parts = [p.strip() for p in clean_text.split("·") if p.strip()]
+                            if seller_parts: seller = seller_parts[0]
 
                         products.append({
-                            "name": name.strip(),
-                            "price": price.strip(),
-                            "seller": seller.strip(),
+                            "name": name[:150].strip(), # Обмежуємо довжину
+                            "price": price,
+                            "seller": seller[:50],
                             "city": "",
                             "url": url,
-                            "image_url": "",
                             "platform": "google_shopping",
                         })
                     except: continue
 
-                # Видаляємо дублікати за URL
-                unique_products = {p['url']: p for p in products if p.get('url')}.values()
-                products = list(unique_products)
-                logger.info(f"Successfully parsed {len(products)} unique items")
+                # Фінальна очистка
+                unique_products = {}
+                for p in products:
+                    # Ключ унікальності - назва + ціна (щоб бачити різні магазини з однаковим товаром)
+                    key = f"{p['name']}_{p['price']}_{p['seller']}"
+                    if key not in unique_products:
+                        unique_products[key] = p
+                
+                logger.info(f"✅ ULTRA-GREEDY complete! Found {len(unique_products)} unique items.")
+                return list(unique_products.values())
 
             finally:
                 driver.quit()
         except Exception as e:
-            logger.error("Scraping error: %s", e)
+            logger.error("❌ Critical scraping error: %s", e)
         
         return products
 
@@ -160,7 +171,7 @@ class WebScraper:
         try:
             raw = list(DDGS().text(search_query, max_results=limit or 100))
         except Exception as e:
-            logger.error("DuckDuckGo search error: %s", e)
+            logger.error("DuckDuckGo error: %s", e)
             return []
 
         products = []
@@ -171,7 +182,6 @@ class WebScraper:
                 "seller": self._domain(r.get("href", "")),
                 "city": "",
                 "url": r.get("href", ""),
-                "image_url": "",
                 "platform": PLATFORM,
             })
         return products
