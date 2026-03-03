@@ -1,8 +1,16 @@
 import logging
+import time
+import random
+import subprocess
+import re
+from pathlib import Path
 from urllib.parse import quote
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from bs4 import BeautifulSoup
-from config import HEADLESS
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from config import HEADLESS, BROWSER_SESSION_PATH, PROXY_ENABLED, PROXY_URL
 
 logger = logging.getLogger(__name__)
 
@@ -13,125 +21,137 @@ _MAX_PAGES = 5
 class RozetkaScraper:
     BASE_URL = "https://rozetka.com.ua/ua/search/?text={}&page={}"
 
+    def _get_driver(self):
+        """Ініціалізація undetected-chromedriver (Selenium)."""
+        options = uc.ChromeOptions()
+        
+        # Використовуємо сесію, якщо вказано в налаштуваннях
+        if BROWSER_SESSION_PATH:
+            user_data_dir = Path(BROWSER_SESSION_PATH).resolve()
+            user_data_dir.mkdir(parents=True, exist_ok=True)
+            # Примітка: uc іноді конфліктує з user-data-dir, якщо Chrome вже запущено
+            # options.add_argument(f"--user-data-dir={user_data_dir}")
+
+        options.add_argument("--disable-notifications")
+        options.add_argument("--lang=uk-UA")
+        options.add_argument("--start-maximized")
+        
+        if HEADLESS:
+            options.add_argument("--headless")
+        
+        if PROXY_ENABLED and PROXY_URL:
+            from urllib.parse import urlparse
+            parsed = urlparse(PROXY_URL)
+            options.add_argument(f'--proxy-server={parsed.hostname}:{parsed.port}')
+
+        def get_chrome_version():
+            try:
+                cmd = 'reg query "HKEY_CURRENT_USER\\Software\\Google\\Chrome\\BLBeacon" /v version'
+                output = subprocess.check_output(cmd, shell=True).decode()
+                return int(re.search(r'(\d+)\.', output).group(1))
+            except: 
+                return None
+
+        driver = uc.Chrome(
+            options=options, 
+            use_subprocess=True, 
+            version_main=get_chrome_version()
+        )
+        return driver
+
     def search_page(self, query: str, page: int) -> list[dict]:
-        """Single page with scroll — used by Excel collector."""
+        """Одиночна сторінка — для Excel-колектора."""
         url = self.BASE_URL.format(quote(query), page)
         html = self._fetch_page_html(url)
         return self._parse(html) if html else []
 
     def search_products(self, query: str, limit: int = 10) -> list[dict]:
-        """Multi-page search keeping ONE browser open for all pages."""
+        """Пошук на кількох сторінках (Selenium)."""
         products: list[dict] = []
+        driver = None
         try:
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(channel="chrome", headless=HEADLESS)
-                context = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
-                    ),
-                    locale="uk-UA",
-                )
-                tab = context.new_page()
-                
-                def block_aggressively(route):
-                    if route.request.resource_type in ["image", "stylesheet", "font", "media"]:
-                        return route.abort()
-                    url = route.request.url.lower()
-                    if any(bad in url for bad in ["google", "facebook", "analytics", "hotjar"]):
-                        return route.abort()
-                    return route.continue_()
-
-                tab.route("**/*", block_aggressively)
-
-                for page_num in range(1, _MAX_PAGES + 1):
-                    url = self.BASE_URL.format(quote(query), page_num)
+            driver = self._get_driver()
+            for page_num in range(1, _MAX_PAGES + 1):
+                url = self.BASE_URL.format(quote(query), page_num)
+                try:
+                    driver.get(url)
+                    time.sleep(random.uniform(3, 5)) # Даємо час завантажитись
+                    
                     try:
-                        tab.goto(url, wait_until="commit", timeout=20_000)
-                        tab.wait_for_timeout(600)
-                        try:
-                            tab.wait_for_selector(
-                                "li.goods-tile, .goods-tile__inner", timeout=15_000
-                            )
-                        except PWTimeout:
-                            logger.warning("Rozetka p%d: cards timeout", page_num)
-                        self._scroll_to_bottom(tab)
-                        html = tab.content()
-                        batch = self._parse(html)
-                        if not batch:
-                            break
-                        products.extend(batch)
-                        if limit and len(products) >= limit:
-                            break
-                    except Exception as e:
-                        logger.error("Rozetka page %d error: %s", page_num, e)
+                        WebDriverWait(driver, 15).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "li.goods-tile, .goods-tile__inner"))
+                        )
+                    except Exception:
+                        logger.warning("Rozetka p%d: таймаут очікування карток", page_num)
+                    
+                    self._scroll_to_bottom(driver)
+                    html = driver.page_source
+                    batch = self._parse(html)
+                    
+                    if not batch:
+                        logger.info("Rozetka p%d: товари не знайдені", page_num)
                         break
-
-                browser.close()
+                    
+                    logger.info("Rozetka p%d: знайдено %d товарів", page_num, len(batch))
+                    for item in batch:
+                        logger.info("  [FOUND] %s | %s", item['name'][:60], item['price'])
+                        
+                    products.extend(batch)
+                    if limit and len(products) >= limit:
+                        break
+                except Exception as e:
+                    logger.error("Rozetka page %d error: %s", page_num, e)
+                    break
         except Exception as e:
-            logger.error("Rozetka Playwright error: %s", e)
+            logger.error("Rozetka Selenium error: %s", e)
+        finally:
+            if driver:
+                driver.quit()
 
         return products[:limit] if limit else products
 
-    # ------------------------------------------------------------------ #
-
     def _fetch_page_html(self, url: str) -> str:
+        driver = None
         try:
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(channel="chrome", headless=HEADLESS)
-                context = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
-                    ),
-                    locale="uk-UA",
+            driver = self._get_driver()
+            driver.get(url)
+            time.sleep(random.uniform(3, 5))
+            try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "li.goods-tile, .goods-tile__inner"))
                 )
-                page = context.new_page()
+            except Exception:
+                logger.warning("Rozetka timeout on %s", url)
+            
+            self._scroll_to_bottom(driver)
+            html = driver.page_source
+            
+            # Логування знайденого
+            batch = self._parse(html)
+            logger.info("Rozetka (single page): знайдено %d товарів", len(batch))
+            for item in batch:
+                logger.info("  [FOUND] %s | %s", item['name'][:60], item['price'])
                 
-                def block_aggressively(route):
-                    if route.request.resource_type in ["image", "stylesheet", "font", "media"]:
-                        return route.abort()
-                    return route.continue_()
-
-                page.route("**/*", block_aggressively)
-                page.goto(url, wait_until="commit", timeout=20_000)
-                page.wait_for_timeout(600)
-                try:
-                    page.wait_for_selector(
-                        "li.goods-tile, .goods-tile__inner", timeout=15_000
-                    )
-                except PWTimeout:
-                    logger.warning("Rozetka: cards timeout on %s", url)
-                self._scroll_to_bottom(page)
-                html = page.content()
-                browser.close()
-                return html
+            return html
         except Exception as e:
-            logger.error("Rozetka Playwright error: %s", e)
+            logger.error("Rozetka Selenium error: %s", e)
             return ""
+        finally:
+            if driver:
+                driver.quit()
 
-    @staticmethod
-    def _scroll_to_bottom(page) -> None:
+    def _scroll_to_bottom(self, driver):
+        """Поступовий скрол для підвантаження лінивих картинок."""
         try:
-            page.evaluate("""
-                () => new Promise(resolve => {
-                    let total = 0;
-                    const step = 400;
-                    const delay = 150;
-                    const timer = setInterval(() => {
-                        window.scrollBy(0, step);
-                        total += step;
-                        if (total >= document.body.scrollHeight) {
-                            clearInterval(timer);
-                            resolve();
-                        }
-                    }, delay);
-                })
-            """)
-            page.wait_for_timeout(500)
-        except Exception:
+            last_height = driver.execute_script("return document.body.scrollHeight")
+            for _ in range(3):
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(1.5)
+                new_height = driver.execute_script("return document.body.scrollHeight")
+                if new_height == last_height:
+                    break
+                last_height = new_height
+        except:
             pass
 
     def _parse(self, html: str) -> list[dict]:
@@ -161,11 +181,9 @@ class RozetkaScraper:
                     or card.select_one("[class*='price-value']")
                 )
                 price_text = price_tag.get_text(strip=True) if price_tag else ""
-                price = (
-                    f"{price_text} грн"
-                    if price_text and "грн" not in price_text.lower()
-                    else (price_text or "Ціна не вказана")
-                )
+                # Вичищаємо ціну від зайвих символів
+                price_text = re.sub(r'[^\d\s]', '', price_text).strip()
+                price = f"{price_text} грн" if price_text else "Ціна не вказана"
 
                 link_tag = (
                     card.select_one("a.goods-tile__heading")
@@ -176,12 +194,28 @@ class RozetkaScraper:
                 if url and not url.startswith("http"):
                     url = "https://rozetka.com.ua" + url
 
+                # Картинка
+                img_tag = card.select_one("img.goods-tile__picture") or card.select_one("img")
+                image_url = ""
+                if img_tag:
+                    image_url = img_tag.get("src") or img_tag.get("data-src") or ""
+
+                # Продавець
+                seller_tag = card.select_one(".goods-tile__seller")
+                seller = seller_tag.get_text(strip=True) if seller_tag else "Rozetka"
+                
+                # ID товару
+                product_id = card.get("data-goods-id") or ""
+
                 products.append({
                     "name": name,
                     "price": price,
+                    "seller": seller,
+                    "city": "",
                     "url": url,
-                    "image_url": "",
+                    "image_url": image_url,
                     "platform": PLATFORM,
+                    "product_id": product_id
                 })
             except Exception:
                 continue
