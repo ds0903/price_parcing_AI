@@ -34,16 +34,11 @@ class RozetkaScraper:
 
         options.add_argument("--disable-notifications")
         options.add_argument("--lang=uk-UA")
-        options.add_argument("--start-maximized")
+        options.add_argument("--window-size=1366,900")
         
         if HEADLESS:
             options.add_argument("--headless")
         
-        if PROXY_ENABLED and PROXY_URL:
-            from urllib.parse import urlparse
-            parsed = urlparse(PROXY_URL)
-            options.add_argument(f'--proxy-server={parsed.hostname}:{parsed.port}')
-
         def get_chrome_version():
             try:
                 cmd = 'reg query "HKEY_CURRENT_USER\\Software\\Google\\Chrome\\BLBeacon" /v version'
@@ -52,10 +47,14 @@ class RozetkaScraper:
             except: 
                 return None
 
+        # Додаємо випадковий порт, щоб уникнути конфліктів при паралельному запуску
+        port = random.randint(9222, 9888)
+        
         driver = uc.Chrome(
             options=options, 
             use_subprocess=True, 
-            version_main=get_chrome_version()
+            version_main=get_chrome_version(),
+            port=port
         )
         return driver
 
