@@ -3,6 +3,7 @@ import time
 import random
 import subprocess
 import re
+import threading
 from pathlib import Path
 from urllib.parse import quote
 from bs4 import BeautifulSoup
@@ -20,6 +21,7 @@ _MAX_PAGES = 5
 
 class RozetkaScraper:
     BASE_URL = "https://rozetka.com.ua/ua/search/?text={}&page={}"
+    _driver_lock = threading.Lock()
 
     def _get_driver(self):
         """Ініціалізація undetected-chromedriver (Selenium)."""
@@ -29,8 +31,6 @@ class RozetkaScraper:
         if BROWSER_SESSION_PATH:
             user_data_dir = Path(BROWSER_SESSION_PATH).resolve()
             user_data_dir.mkdir(parents=True, exist_ok=True)
-            # Примітка: uc іноді конфліктує з user-data-dir, якщо Chrome вже запущено
-            # options.add_argument(f"--user-data-dir={user_data_dir}")
 
         options.add_argument("--disable-notifications")
         options.add_argument("--lang=uk-UA")
@@ -50,12 +50,20 @@ class RozetkaScraper:
         # Додаємо випадковий порт, щоб уникнути конфліктів при паралельному запуску
         port = random.randint(9222, 9888)
         
-        driver = uc.Chrome(
-            options=options, 
-            use_subprocess=True, 
-            version_main=get_chrome_version(),
-            port=port
-        )
+        # Використовуємо lock, щоб уникнути WinError 183 при одночасному патчингу драйвера
+        with self._driver_lock:
+            driver = uc.Chrome(
+                options=options, 
+                use_subprocess=True, 
+                version_main=get_chrome_version(),
+                port=port
+            )
+            # Примусово ставимо розмір вікна
+            try:
+                driver.set_window_size(1366, 900)
+            except:
+                pass
+                
         return driver
 
     def search_page(self, query: str, page: int) -> list[dict]:
