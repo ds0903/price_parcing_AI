@@ -182,15 +182,29 @@ class RozetkaScraper:
                 if not name:
                     continue
 
+                # Перевірка наявності (пропускаємо, якщо немає в наявності)
+                availability_tag = card.select_one(".goods-tile__availability")
+                if availability_tag:
+                    availability_text = availability_tag.get_text(strip=True).lower()
+                    if "немає в наявності" in availability_text or "немає" in availability_text:
+                        continue
+
                 price_tag = (
                     card.select_one("span.goods-tile__price-value")
                     or card.select_one(".price__value")
                     or card.select_one("[class*='price-value']")
                 )
                 price_text = price_tag.get_text(strip=True) if price_tag else ""
+                
+                # Якщо ціни немає або замість неї текст про відсутність
+                if not price_text or "немає" in price_text.lower():
+                    continue
+
                 # Вичищаємо ціну від зайвих символів
                 price_text = re.sub(r'[^\d\s]', '', price_text).strip()
                 price = f"{price_text} грн" if price_text else "Ціна не вказана"
+                if not price_text: # Ще раз перевіряємо після вичистки
+                    continue
 
                 link_tag = (
                     card.select_one("a.goods-tile__heading")
