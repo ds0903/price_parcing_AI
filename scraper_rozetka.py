@@ -89,7 +89,7 @@ class RozetkaScraper:
                             EC.presence_of_element_located((By.CSS_SELECTOR, "li.goods-tile, .goods-tile__inner"))
                         )
                     except Exception:
-                        logger.warning("Rozetka p%d: таймаут очікування карток", page_num)
+                        logger.warning("Rozetka p%d: таймаут очікування карток товарів", page_num)
                     
                     self._scroll_to_bottom(driver)
                     html = driver.page_source

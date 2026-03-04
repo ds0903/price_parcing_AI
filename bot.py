@@ -684,7 +684,7 @@ async def handle_text(message: Message) -> None:
             await message.answer("❓ AI не зміг виділити товар із вашого запиту. Спробуйте написати чіткіше.")
             return
 
-        status_msg = await message.answer(f"🌐 Шукаю «{query}» в Google Shopping...\n⏳ Це займе до 2 хвилин.")
+        status_msg = await message.answer(f"🌐 Шукаю «{query}» в Google Shopping...\n⏳ Це займе до 5 хвилин.")
         
         from scraper_web import WebScraper
         web_scraper = WebScraper()

@@ -52,7 +52,29 @@ classify_intent: |
   - weight_kg: якщо вказано вагу (напр. '14 кг' → 14, '500г' → 0.5, '85 г' → 0.085). Завжди конвертуй грами в кг.
   - brand: назва виробника (напр. 'Мяу', 'Meow', 'Royal Canin', 'Club 4 Paws').
   - subtype: підвид товару або специфікація (напр. 'для стерилізованих', 'для кошенят', 'для дорослих', 'сенситів' тощо).
-  ВАЖЛИВО: Якщо в запиті є "Мяу" або "Meow", обов'язково запиши це в brand. Якщо є "стерилізованих", запиши в subtype.
+  ВАЖЛИВО — розпізнавання брендів та підвидів:
+  - "Мяу" / "Meow" / "Мяу!" → brand: "Мяу"
+  - "Гав" / "Гав!" / "Gav" → brand: "Гав"
+  - "Оптімал" / "Оптіміл" / "Optimeal" → brand: "Optimeal"
+  - "Клуб 4 лапи" / "Club 4 Paws" / "К4Л" / "4 лапи" → brand: "Club 4 Paws"
+  - "Делікшес" / "Delickcious" / "Ділішес" / "Delishis" → brand: "Delickcious"
+  - "Фелікс" / "Felix" → brand: "Felix"
+  - "Пуріна" / "Purina" / "Pro Plan" / "Cat Chow" / "Friskies" → brand: "Purina"
+  - "Роял Канін" / "Royal Canin" → brand: "Royal Canin"
+  - "Брит" / "Brit" / "Brit Premium" / "Brit Care" → brand: "Brit"
+  - "Віскас" / "Whiskas" → brand: "Whiskas"
+  Підвиди (subtype) — записуй якщо вказано:
+  - "для стерилізованих" / "для кастрованих" / "Sterilised" → subtype: "для стерилізованих"
+  - "для кошенят" / "Kitten" / "Junior" → subtype: "для кошенят"
+  - "для цуценят" / "Puppy" → subtype: "для цуценят"
+  - "Senior" / "для літніх" / "7+" / "11+" → subtype: "Senior"
+  - "Hairball" / "для виведення шерсті" / "Anti-hairball" → subtype: "Hairball"
+  - "Sensitive" / "чутливе травлення" / "Sensitive Digestion" → subtype: "Sensitive"
+  - "Indoor" / "для домашніх" / "4in1" → subtype: "Indoor"
+  - "для малих порід" / "Mini" / "Small" → subtype: "для малих порід"
+  - "для великих порід" / "Maxi" / "Large" → subtype: "для великих порід"
+  - "Fantastic" / "Sensations" / "Soup" / "As Good as It Looks" / "Beauty" / "Fitness" / "Podium" / "Harmony" → subtype: (назва лінійки)
+  - "гіпоалергенний" / "Hypoallergenic" / "Grain-Free" / "без злаків" → subtype: "Hypoallergenic"
   - interval_minutes: хвилини між запусками (тільки для schedule_set)
   - price_min/price_max: якщо вказано ціну/діапазон у грн
   - Якщо параметр не вказано — null
@@ -79,7 +101,17 @@ parse_raw_shopping_data: |
   3. Продавця (назва магазину).
   4. Відповідність запиту: перевір, чи відповідає товар запиту користувача: '{query}' ({filters}).
   
-  МАПІНГ БРЕНДІВ: Вважай "Клуб 4 лапи", "Club 4 Paws" та "К4Л" одним брендом.
+  МАПІНГ БРЕНДІВ (вважай одним брендом):
+  - "Клуб 4 лапи" = "Club 4 Paws" = "К4Л" = "Club4Paws" = "4 лапи"
+  - "Мяу" = "Meow" = "Мяу!" = "Myau"
+  - "Гав" = "Гав!" = "Gav" = "Hav"
+  - "Оптімал" = "Оптіміл" = "Optimeal" = "Оптиміл"
+  - "Делікшес" = "Delickcious" = "Ділішес" = "Delishis"
+  - "Фелікс" = "Felix" = "Felix by Purina" = "Purina Felix"
+  - "Пуріна" = "Purina" = "Pro Plan" = "Cat Chow" = "Friskies"
+  - "Роял Канін" = "Royal Canin" = "RC"
+  - "Брит" = "Brit" = "Brit Premium" = "Brit Care"
+  - "Віскас" = "Whiskas" = "Wiskas"
   
   ФОРМАТ ВІДПОВІДІ: Поверни ЛИШЕ валідний JSON-список об'єктів (без ```):
   [
@@ -96,12 +128,27 @@ filter_products_by_intent: |
   {strictness}
 
   ПРАВИЛО МУЛЬТИМОВНОСТІ ТА МАПІНГУ:
-  1. Аналізуй назви на УКР, РОС, АНГЛ мовах. 
-  2. МАПІНГ БРЕНДІВ: Вважай ці назви ОДНИМ брендом:
-     - "Клуб 4 лапи" = "Club 4 Paws" = "К4Л"
-     - "Мяу" = "Meow" = "Мяу!"
+  1. Аналізуй назви на УКР, РОС, АНГЛ мовах.
+  2. МАПІНГ БРЕНДІВ (вважай ці назви ОДНИМ брендом):
+     - "Клуб 4 лапи" = "Club 4 Paws" = "К4Л" = "Club4Paws" = "4 лапи" = "Клуб4Лапи" = "Club 4 Лапи" = "К4Л Premium"
+     - "Мяу" = "Meow" = "Мяу!" = "Myau" = "Мяу кіт" = "Мяу корм"
+     - "Гав" = "Гав!" = "Gav" = "Hav" = "Gav!" = "корм Гав"
+     - "Оптімал" = "Оптіміл" = "Optimeal" = "Оптиміл" = "Optimal" = "Оптімел" = "Optimeal Beauty"
+     - "Делікшес" = "Delickcious" = "Ділішес" = "Делікшис" = "Delishis" = "Delicious" = "Delichious"
+     - "Фелікс" = "Felix" = "Felix by Purina" = "Purina Felix" = "FELIX"
+     - "Пуріна" = "Purina" = "Nestle Purina" = "Purina ONE" = "Purina Pro Plan" = "Pro Plan" = "Cat Chow" = "Friskies"
      - "Пан Кіт" = "Pan Kot"
-  3. Не відкидай товар, якщо його назва — це англійський аналог українського бренда, вказаного в фільтрі.
+     - "Роял Канін" = "Royal Canin" = "RC" = "Royal"
+     - "Брит" = "Brit" = "Brit Premium" = "Brit Care" = "Brit Fresh"
+     - "Віскас" = "Whiskas" = "Wiskas"
+     - "Джосера" = "Josera"
+  3. Не відкидай товар, якщо його назва — це англійський/українській аналог бренда, вказаного в фільтрі.
+  4. ЛІНІЙКИ FELIX — всі є одним брендом Felix: Fantastic, Fantastic DUO, Sensations (Jellies / Crunchies / Extras),
+     As Good as It Looks (AGAIL), Soup (Original / Tender Strips / Farm Selection / Fish Selection), Party Mix.
+  5. ЛІНІЙКИ OPTIMEAL — всі є одним брендом Optimeal: Adult, Kitten, Sterilised, Sensitive, Hairball,
+     Beauty Fitness, Beauty Podium, Beauty Harmony.
+  6. ЛІНІЙКИ CLUB 4 PAWS — Premium Adult, Premium Sterilised, Premium Kitten, Premium Senior, Premium Hairball,
+     Premium Sensitive, Premium Indoor — все один бренд "Клуб 4 лапи".
 
   Список оголошень (назва | ціна):
   {lines}
@@ -114,14 +161,26 @@ strict_mode: |
   Залишай ЛИШЕ товари що точно відповідають усім вказаним умовам за змістом.
 
   ЗНАЙ: корм для котів має окремі підвиди — це РІЗНІ товари:
-  - Звичайний / Adult / дорослі (без додаткових позначень)
-  - Для стерилізованих / Sterilized / кастрованих
-  - Для котів 7+ / Senior / для літніх
-  - Для виведення шерсті / Hairball Control / Anti-hairball
-  - Для чутливого травлення / Sensitive Digestion / Sensitive
-  - Indoor / для домашніх котів / 4in1
-  - Для кошенят / Kitten / Junior
-  - Повнораційний / Premium / Adult Premium
+  - Звичайний / Adult / дорослі (без додаткових позначень) / Premium Adult / повнораційний
+  - Для стерилізованих / Sterilized / Sterilised / кастрованих / для кастрованих
+  - Для котів 7+ / Senior / для літніх / для старших / 11+
+  - Для виведення шерсті / Hairball Control / Anti-hairball / Hairball / шерсть
+  - Для чутливого травлення / Sensitive Digestion / Sensitive / Sensitive Stomach
+  - Indoor / для домашніх котів / 4in1 / Housecat
+  - Для кошенят / Kitten / Junior / для малюків / для цуценят (тут: собак) / вагітних та годуючих
+  - Гіпоалергенний / Hypoallergenic / Grain-Free / без злаків
+  - Beauty / Fitness / Podium / Harmony (лінійка Optimeal Beauty)
+  - Fantastic / Sensations / Jellies / Crunchies / As Good as It Looks / Soup / DUO (лінійки Felix)
+
+  ЗНАЙ: корм для собак має окремі підвиди — це РІЗНІ товари:
+  - Для дорослих / Adult / для всіх порід
+  - Для цуценят / Puppy / Junior / для малюків
+  - Для малих порід / Mini / Small / для маленьких собак / Small Breed
+  - Для середніх порід / Medium / Medium Breed
+  - Для великих порід / Maxi / Large / Large Breed / Maxi Breed / для великих
+  - Для гігантських порід / Giant / XL
+  - Для стерилізованих / Sterilised / кастрованих
+  - Для вагітних та годуючих / Pregnant / Nursing / Mother
 
   ВИКЛЮЧАЙ (КРИТИЧНО):
   1. ІНШІ ФОРМИ ВИПУСКУ: Якщо шукають "вологий корм" (паучі), ВИДАЛЯЙ "консерви", "банки", "паштети". Це різні товари!
@@ -132,6 +191,11 @@ strict_mode: |
      - Вказано "для кошенят" → видаляй Adult, Sterilized, Senior, Hairball, Indoor
      - Вказано "Hairball" → видаляй Sterilized, Kitten, Senior, Indoor, Adult
      - Вказано "Indoor" → видаляй Sterilized, Kitten, Senior, Hairball, Adult
+     - Вказано "для цуценят" → видаляй Adult, Sterilized (собаки)
+     - Вказано "для малих порід" → видаляй Medium, Maxi, Large, Puppy (якщо не вказано)
+     - Вказано "Fantastic" → залишай тільки Felix Fantastic (відкидай Sensations, Soup, As Good as It Looks)
+     - Вказано "Sensations" → залишай тільки Felix Sensations
+     - Вказано "Beauty" / "Fitness" / "Podium" / "Harmony" → залишай тільки Optimeal Beauty лінійку
      ЯКЩО subtype НЕ вказано — залишай ВСІ підвиди що мають правильний смак/бренд/вагу!
 
   ВАЖЛИВО: Якщо вказано бренд — залишай ТІЛЬКИ товари цього бренду.
@@ -141,19 +205,22 @@ wide_mode: |
   РЕЖИМ: ШИРОКИЙ — користувач не уточнив підвид/тип.
   Залишай ВСІ варіанти з правильної категорії товару.
 
-  ЗНАЙ: корм для котів має окремі підвиди — це НЕ різні товари, а різні лінійки ОДНОГО продукту:
-  - Звичайний Adult, для стерилізованих, для котів 7+/Senior
-  - Hairball Control (виведення шерсті), Sensitive Digestion (чутливе травлення)
-  - Indoor / 4in1 (для домашніх), Повнораційний / Premium
-  - Для кошенят / Kitten
+  ЗНАЙ: корм для котів має підвиди — це різні лінійки ОДНОГО продукту:
+  - Adult / Sterilised / Senior (7+, 11+) / Kitten / Hairball Control / Sensitive / Indoor / Hypoallergenic / Beauty
+  - Felix лінійки: Fantastic / Fantastic DUO / Sensations (Jellies/Crunchies) / As Good as It Looks / Soup / Party Mix
+  - Optimeal лінійки: Adult / Sterilised / Sensitive / Hairball / Beauty (Fitness/Podium/Harmony)
+  - Club 4 Paws: Premium Adult / Premium Sterilised / Premium Kitten / Premium Senior / Premium Hairball / Premium Sensitive / Premium Indoor
   Якщо не вказано підвид — залишай ВСІ ці підвиди.
 
-  ЗАЛИШАЙ: всі підвиди, смаки, форми випуску що відповідають запиту
+  ЗНАЙ: корм для собак має підвиди — залишай всі якщо не уточнено:
+  - Adult / Puppy / Senior / Sterilised / Mini / Small / Medium / Maxi / Large / Giant
+
+  ЗАЛИШАЙ: всі підвиди, смаки, форми випуску що відповідають запиту.
   ВИКЛЮЧАЙ лише очевидно нерелевантне:
-  — Товари з іншої категорії (корм для собак — якщо шукали для котів)
+  — Товари з іншої категорії (корм для собак — якщо шукали для котів, і навпаки)
   — Інший бренд якщо бренд вказано явно
   — Інша вага якщо вага вказана явно
-  — Запчастини, аксесуари, послуги
+  — Запчастини, аксесуари, послуги, наповнювачі, іграшки
 
 group_products: |
   Для кожного товару зі списку визнач підвид (групу) на основі назви.
