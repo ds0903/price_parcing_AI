@@ -9,7 +9,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from config import PROXY_URL, PROXY_ROTATE_URL, PROXY_ROTATE_ENABLED, BROWSER_SESSION_PATH, PROXY_ENABLED
+from config import PROXY_URL, PROXY_ROTATE_URL, PROXY_ROTATE_ENABLED, BROWSER_SESSION_PATH, PROXY_ENABLED, HEADLESS
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,11 @@ class WebScraper:
             options.add_argument(f"--user-data-dir={user_data_dir}")
             options.add_argument("--disable-notifications")
             options.add_argument("--lang=uk-UA")
-            options.add_argument("--start-maximized")
+            if HEADLESS:
+                options.add_argument("--headless=new")
+                options.add_argument("--window-size=1366,900")
+            else:
+                options.add_argument("--start-maximized")
             
             if PROXY_ENABLED and PROXY_URL:
                 from urllib.parse import urlparse

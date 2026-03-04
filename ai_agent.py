@@ -157,25 +157,30 @@ class GeminiAgent:
         for i in range(0, len(raw_blocks), batch_size):
             batch = raw_blocks[i:i + batch_size]
             raw_text_combined = "\n---\n".join(batch)
-            
+
             prompt = _PROMPTS["parse_raw_shopping_data"].format(
                 query=query,
                 filters=json.dumps(filters, ensure_ascii=False),
                 raw_text=raw_text_combined
             )
-            
+
             try:
                 reply = self._query_once(user_id, prompt).strip()
-                # Прибираємо markdown
                 if reply.startswith("```"):
                     reply = reply.split("```")[1]
                     if reply.startswith("json"): reply = reply[4:]
-                
+
                 parsed_batch = json.loads(reply)
                 if isinstance(parsed_batch, list):
-                    all_parsed.extend(parsed_batch)
+                    # Якщо AI повернув менше об'єктів ніж блоків — добиваємо порожніми
+                    # щоб індекси URL збігалися з raw_blocks_data
+                    while len(parsed_batch) < len(batch):
+                        parsed_batch.append({"name": "", "price": "", "seller": "", "match": False})
+                    all_parsed.extend(parsed_batch[:len(batch)])
             except Exception as e:
                 logger.error("parse_raw_shopping_data batch error: %s", e)
+                # При помилці теж добиваємо порожніми — щоб не зсунути індекси
+                all_parsed.extend([{"name": "", "price": "", "seller": "", "match": False}] * len(batch))
                 
         return all_parsed
 
