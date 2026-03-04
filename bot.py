@@ -717,18 +717,26 @@ async def handle_text(message: Message) -> None:
 
                 await status_msg.edit_text(f"📦 Знайдено {len(raw_blocks_data)} карток. AI розпізнає ціни та магазини...")
 
-                # Витягуємо лише текст блоків для AI
-                raw_texts = [b["raw_text"] for b in raw_blocks_data]
-                
                 # 2. Витягуємо фільтри з контексту
                 intent = await asyncio.to_thread(agent.classify_intent, user_id, text)
                 filters = intent.get("filters") or {}
 
-                # 3. AI парсить сирий текст у структуровані товари
-                parsed_products = await asyncio.to_thread(
+                # 3. AI парсить блоки паралельно у 2 потоки
+                mid = len(raw_blocks_data) // 2
+                half_a = raw_blocks_data[:mid] if mid else raw_blocks_data
+                half_b = raw_blocks_data[mid:] if mid else []
+                ai_tasks = [asyncio.to_thread(
                     agent.parse_raw_shopping_data,
-                    user_id, raw_texts, query, filters
-                )
+                    user_id, [b["raw_text"] for b in half_a], query, filters,
+                )]
+                if half_b:
+                    ai_tasks.append(asyncio.to_thread(
+                        agent.parse_raw_shopping_data,
+                        user_id, [b["raw_text"] for b in half_b], query, filters,
+                    ))
+                ai_results = await asyncio.gather(*ai_tasks)
+                parsed_products = ai_results[0] + (ai_results[1] if len(ai_results) > 1 else [])
+                raw_blocks_data = half_a + half_b  # порядок збережено для URL за індексом
 
                 # Додаємо URL назад до розпарсених товарів (співставляємо за індексом)
                 # Дедублікація: seller + name[:40] + price — всі три збіглись = дублікат
