@@ -42,6 +42,7 @@ class GeminiAgent:
             self._history[user_id] = history[-limit:]
 
     def _send(self, user_id: int, user_text: str) -> str:
+        """З history + зберігає відповідь. Тільки для чату (follow_up)."""
         history = self._get_history(user_id)
         contents = history + [
             types.Content(role="user", parts=[types.Part.from_text(text=user_text)])
@@ -58,15 +59,11 @@ class GeminiAgent:
         self._append(user_id, "model", reply)
         return reply
 
-    def _query_once(self, user_id: int, prompt: str) -> str:
-        """One-shot query using conversation history as context but without saving the reply."""
-        history = self._get_history(user_id)
-        contents = history + [
-            types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-        ]
+    def _query_fresh(self, prompt: str) -> str:
+        """Без history — для всіх технічних операцій (пошук, фільтрація, парсинг, групування)."""
         response = client.models.generate_content(
             model=GEMINI_MODEL,
-            contents=contents,
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=prompt)])],
             config=types.GenerateContentConfig(
                 system_instruction=_PROMPTS["system_prompt"]
             ),
@@ -102,12 +99,13 @@ class GeminiAgent:
             products="\n".join(lines),
         )
         try:
-            return self._send(user_id, prompt)
+            return self._query_fresh(prompt)
         except Exception as e:
             logger.error("Gemini analyze error: %s", e)
             return "Помилка AI-аналізу. Перевірте GEMINI_API_KEY."
 
     def follow_up(self, user_id: int, message: str) -> str:
+        """Єдина функція що використовує history — звичайний чат."""
         try:
             return self._send(user_id, message)
         except Exception as e:
@@ -118,8 +116,7 @@ class GeminiAgent:
         """AI аналізує повідомлення і повертає структурований намір."""
         prompt = _PROMPTS["classify_intent"].format(text=text)
         try:
-            raw = self._query_once(user_id, prompt)
-            # Прибираємо можливий markdown від моделі
+            raw = self._query_fresh(prompt)
             raw = raw.strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
@@ -131,11 +128,10 @@ class GeminiAgent:
             return {"action": "chat", "query": "", "interval_minutes": None, "platforms": []}
 
     def extract_search_query(self, user_id: int, text: str, filter_hint: str = "") -> str:
-        """Extract product name from conversation context, optionally with a filter hint."""
         hint = f" Попередній контекст: '{filter_hint}'." if filter_hint else ""
         prompt = _PROMPTS["extract_search_query"].format(text=text, hint=hint)
         try:
-            return self._query_once(user_id, prompt)
+            return self._query_fresh(prompt)
         except Exception as e:
             logger.error("Gemini extract_search_query error: %s", e)
             return ""
@@ -149,11 +145,10 @@ class GeminiAgent:
         """AI перетворює список сирих текстових блоків у структуровані товари."""
         if not raw_blocks:
             return []
-            
-        # Групуємо блоки, щоб не робити занадто багато запитів (по 10 блоків)
+
         all_parsed = []
         batch_size = 10
-        
+
         for i in range(0, len(raw_blocks), batch_size):
             batch = raw_blocks[i:i + batch_size]
             raw_text_combined = "\n---\n".join(batch)
@@ -165,23 +160,20 @@ class GeminiAgent:
             )
 
             try:
-                reply = self._query_once(user_id, prompt).strip()
+                reply = self._query_fresh(prompt)
                 if reply.startswith("```"):
                     reply = reply.split("```")[1]
                     if reply.startswith("json"): reply = reply[4:]
 
                 parsed_batch = json.loads(reply)
                 if isinstance(parsed_batch, list):
-                    # Якщо AI повернув менше об'єктів ніж блоків — добиваємо порожніми
-                    # щоб індекси URL збігалися з raw_blocks_data
                     while len(parsed_batch) < len(batch):
                         parsed_batch.append({"name": "", "price": "", "seller": "", "match": False})
                     all_parsed.extend(parsed_batch[:len(batch)])
             except Exception as e:
                 logger.error("parse_raw_shopping_data batch error: %s", e)
-                # При помилці теж добиваємо порожніми — щоб не зсунути індекси
                 all_parsed.extend([{"name": "", "price": "", "seller": "", "match": False}] * len(batch))
-                
+
         return all_parsed
 
     def group_products_by_subtype(self, user_id: int, products: list[dict]) -> list[dict]:
@@ -192,7 +184,7 @@ class GeminiAgent:
         prompt = _PROMPTS["group_products"].format(lines=lines)
         print(f"\n[GROUPING] Групую {len(products)} товарів...")
         try:
-            reply = self._query_once(user_id, prompt).strip()
+            reply = self._query_fresh(prompt)
             if reply.startswith("```"):
                 reply = reply.split("```")[1]
                 if reply.startswith("json"):
@@ -227,7 +219,6 @@ class GeminiAgent:
         )
         intent_line = f"Уточнення користувача: '{filter_intent}'.\n" if filter_intent else ""
 
-        # Формуємо блок жорстких вимог із структурованих фільтрів
         hard_rules = []
         f = filters or {}
         if f.get("weight_kg") is not None:
@@ -243,13 +234,8 @@ class GeminiAgent:
         hard_block = ("ОБОВ'ЯЗКОВІ числові та якісні вимоги (відкидай якщо не відповідає):\n"
                       + "\n".join(hard_rules) + "\n") if hard_rules else ""
 
-        # Чи є жорсткі уточнення (тип, підвид, вікова група тощо)?
         has_strict = bool(hard_rules) or bool(filter_intent)
-
-        if has_strict:
-            strictness = _PROMPTS["strict_mode"]
-        else:
-            strictness = _PROMPTS["wide_mode"]
+        strictness = _PROMPTS["strict_mode"] if has_strict else _PROMPTS["wide_mode"]
 
         prompt = _PROMPTS["filter_products_by_intent"].format(
             query=query,
@@ -262,7 +248,7 @@ class GeminiAgent:
         print(f"[AI] filter_intent: '{filter_intent[:80] if filter_intent else ''}'")
         print(f"[AI] filters: {filters}")
         try:
-            reply = self._query_once(user_id, prompt).strip().lower()
+            reply = self._query_fresh(prompt).lower()
             print(f"[AI] Відповідь Gemini: '{reply}'")
             if "all" in reply:
                 print("[AI] → Залишає ВСІ")

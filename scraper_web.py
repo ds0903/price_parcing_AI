@@ -41,11 +41,8 @@ class WebScraper:
             options.add_argument(f"--user-data-dir={user_data_dir}")
             options.add_argument("--disable-notifications")
             options.add_argument("--lang=uk-UA")
-            if HEADLESS:
-                options.add_argument("--headless=new")
-                options.add_argument("--window-size=1366,900")
-            else:
-                options.add_argument("--start-maximized")
+            # Google Shopping детектує headless і блокує → завжди видимий браузер
+            options.add_argument("--start-maximized")
             
             if PROXY_ENABLED and PROXY_URL:
                 from urllib.parse import urlparse

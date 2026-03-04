@@ -205,11 +205,22 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
         for p in products:
             grouped[p.get("group", "Інше")].append(p)
 
-        for group_key in GROUP_ORDER:
-            if group_key not in grouped:
-                continue
+        # Спочатку відомі групи в порядку GROUP_ORDER, потім динамічні (смак+вага) за алфавітом
+        known = [k for k in GROUP_ORDER if k in grouped]
+        dynamic = sorted(k for k in grouped if k not in GROUP_ORDER)
+        all_keys = known + dynamic
+
+        flat_items = []  # товари з груп < 3 — виводимо плоско в кінці
+
+        row_counter = 1
+        for group_key in all_keys:
             gp = sorted(grouped[group_key], key=_price_key)
             label = GROUP_LABELS.get(group_key, group_key)
+
+            if len(gp) < 3:
+                # Мало товарів — відкладаємо у плоский список
+                flat_items.extend(gp)
+                continue
 
             # Group header
             ws.merge_cells(f"A{current_row}:{last_col}{current_row}")
@@ -246,6 +257,11 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
 
             # Separator
             ws.row_dimensions[current_row].height = 8
+            current_row += 1
+
+        # Плоский хвіст — товари з груп < 3
+        for i, p in enumerate(sorted(flat_items, key=_price_key), 1):
+            render_row(current_row, i, p, i % 2 == 0)
             current_row += 1
 
     else:
@@ -735,7 +751,10 @@ async def handle_text(message: Message) -> None:
                     await status_msg.edit_text("❌ AI не знайшов товарів, що відповідають вашому запиту.")
                     return
 
-                # 4. Формуємо аналіз та Excel
+                # 4. Групуємо по смакам/підвидам
+                final_filtered = await asyncio.to_thread(agent.group_products_by_subtype, user_id, final_filtered)
+
+                # 5. Формуємо аналіз та Excel
                 ai_analysis = await asyncio.to_thread(agent.analyze_prices, user_id, query, final_filtered, "Google Shopping")
                 xlsx_bytes = await asyncio.to_thread(build_excel, query, "google_shopping", final_filtered, ai_analysis)
                 
