@@ -37,6 +37,10 @@ class WebScraper:
             user_data_dir = Path(BROWSER_SESSION_PATH).resolve()
             user_data_dir.mkdir(parents=True, exist_ok=True)
 
+            import os, platform as _platform
+            if _platform.system() != "Windows" and not os.environ.get("DISPLAY"):
+                os.environ["DISPLAY"] = ":1"
+
             options = uc.ChromeOptions()
             options.add_argument(f"--user-data-dir={user_data_dir}")
             options.add_argument("--disable-notifications")
@@ -45,6 +49,7 @@ class WebScraper:
             options.add_argument("--window-size=1366,768")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
 
             if PROXY_ENABLED and PROXY_URL:
                 from urllib.parse import urlparse

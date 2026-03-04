@@ -505,11 +505,10 @@ async def cmd_start(message: Message) -> None:
     user_id = message.from_user.id
     agent.reset_chat(user_id)
     user_context.pop(user_id, None)
-    settings = await get_user_settings(user_id)
     await message.answer(
         "👋 Привіт! Я бот для пошуку цін.\n\n"
-        "Оберіть платформи для пошуку (можна кілька):",
-        reply_markup=settings_keyboard(settings["platforms"]),
+        "Напишіть що шукати, наприклад:\n"
+        "Вологий корм Optimeal для котів з ягням та овочами в желе 85 г в пром ціна до 100 грн"
     )
 
 
