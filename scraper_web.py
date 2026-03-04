@@ -102,14 +102,33 @@ class WebScraper:
                     var seenNorm = new Set();
                     var PRICE_RE = /\\d[\\d\\s]*[,.]?\\d*\\s*(\\u0433\\u0440\\u043d|\\u20B4|UAH)/i;
 
-                    function tryAdd(el) {
+                    function bestUrl(el, fallback) {
+                        // Спочатку шукаємо зовнішнє посилання (не google/gstatic)
+                        var links = el.querySelectorAll('a[href]');
+                        var shopUrl = '';
+                        var googleUrl = '';
+                        for (var j = 0; j < links.length; j++) {
+                            var h = links[j].getAttribute('href') || '';
+                            if (!h || h.startsWith('#') || h.startsWith('javascript')) continue;
+                            if (h.indexOf('gstatic.') !== -1) continue;
+                            if (h.indexOf('google.') === -1) { shopUrl = h; break; }
+                            if (h.indexOf('/shopping/product') !== -1 && !googleUrl) {
+                                googleUrl = 'https://www.google.com.ua' + h;
+                            }
+                        }
+                        var url = shopUrl || fallback || googleUrl;
+                        // Відносний URL → абсолютний
+                        if (url && url.startsWith('/')) url = 'https://www.google.com.ua' + url;
+                        return url;
+                    }
+
+                    function tryAdd(el, hintUrl) {
                         var text = (el.innerText || '').trim();
                         if (!PRICE_RE.test(text) || text.length < 20 || text.length > 800) return false;
                         var norm = text.replace(/[\\s\\W]+/g, '').slice(0, 60).toLowerCase();
                         if (seenNorm.has(norm)) return true;
                         seenNorm.add(norm);
-                        var link = el.querySelector('a[href]');
-                        var href = link ? (link.getAttribute('href') || '') : '';
+                        var href = bestUrl(el, hintUrl);
                         results.push({ raw_text: text.replace(/\\n/g, ' | '), url: href });
                         return true;
                     }
@@ -138,13 +157,15 @@ class WebScraper:
                         if (!href || href.startsWith('#') || href.startsWith('javascript')) return;
                         if (href.indexOf('gstatic.') !== -1) return;
                         if (href.indexOf('google.') !== -1 && href.indexOf('/shopping/product') === -1) return;
+                        // Для зовнішніх URL — передаємо як підказку
+                        var hintUrl = (href.indexOf('google.') === -1) ? href : '';
                         var el = a;
                         for (var d = 0; d < 8; d++) {
                             el = el.parentElement;
                             if (!el || el === document.body) break;
                             var t = (el.innerText || '').trim();
                             if (PRICE_RE.test(t) && t.length >= 20 && t.length <= 800) {
-                                tryAdd(el); break;
+                                tryAdd(el, hintUrl); break;
                             }
                         }
                     });

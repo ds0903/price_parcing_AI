@@ -99,10 +99,10 @@ def format_chat(query: str, platform: str, products: list[dict], ai_analysis: st
 
 
 def _parse_price_int(price_str: str) -> int | None:
-    """'2 864.20₴' → 2864,  '1 500 грн' → 1500,  'Ціна не вказана' → None"""
-    s = re.sub(r"[^\d\s.]", "", price_str).strip()   # залишаємо цифри, пробіли, крапку
-    s = re.sub(r"\s+", "", s)                         # прибираємо пробіли-розділювачі тисяч
-    s = s.split(".")[0]                               # беремо тільки цілу частину
+    """'275,00 грн' → 275,  '2 864.20₴' → 2864,  '1 500 грн' → 1500,  'Ціна не вказана' → None"""
+    s = re.sub(r"[^\d\s,.]", "", price_str).strip()  # залишаємо цифри, пробіли, кому, крапку
+    s = re.sub(r"[,.](\d{1,2})\s*$", "", s).strip()  # видаляємо десяткову частину: ,00 або .20
+    s = re.sub(r"[\s,.]", "", s)                      # прибираємо роздільники тисяч
     return int(s) if s.isdigit() else None
 
 
