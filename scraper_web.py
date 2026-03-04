@@ -90,28 +90,42 @@ class WebScraper:
                     if new_height == last_height: break
                     last_height = new_height
 
-                # --- RAW EXTRACTION ---
-                logger.info("Extracting RAW text blocks from all potential product cards...")
-                
-                # Шукаємо всі можливі контейнери товарів
-                cards = driver.find_elements(By.XPATH, "//div[.//a[contains(@href, 'aclk') or contains(@href, '/shopping/product')]]")
-                
-                for card in cards:
-                    try:
-                        # Беремо весь текст з картки "як є"
-                        raw_text = card.text.replace("\n", " | ").strip()
-                        if not raw_text or len(raw_text) < 20: continue
+                # --- RAW EXTRACTION via JavaScript ---
+                current_url = driver.current_url
+                logger.info(f"Extracting RAW text blocks | URL: {current_url[:120]}")
 
-                        # Посилання забираємо кодом, бо AI його не витягне з тексту
-                        try:
-                            url = card.find_element(By.TAG_NAME, "a").get_attribute("href")
-                        except: url = ""
+                # JS-підхід: шукаємо зовнішні посилання і піднімаємось DOM-деревом
+                # до контейнера з ціною — не залежить від CSS-класів Google
+                raw_results = driver.execute_script("""
+                    var results = [];
+                    var seen = new Set();
 
-                        raw_results.append({
-                            "raw_text": raw_text,
-                            "url": url
-                        })
-                    except: continue
+                    document.querySelectorAll('a[href]').forEach(function(a) {
+                        var href = a.getAttribute('href') || '';
+                        if (!href || href.startsWith('#') || href.startsWith('javascript')) return;
+                        if (href.indexOf('google.') !== -1 || href.indexOf('gstatic.') !== -1) return;
+                        if (seen.has(href)) return;
+
+                        var el = a;
+                        for (var depth = 0; depth < 8; depth++) {
+                            el = el.parentElement;
+                            if (!el) break;
+                            var text = (el.innerText || '').trim();
+                            if (/\\d+[\\s,.]?\\d*\\s*(грн|\\u20B4|UAH)/.test(text)
+                                    && text.length > 15 && text.length < 700) {
+                                seen.add(href);
+                                results.push({
+                                    raw_text: text.replace(/\\n/g, ' | '),
+                                    url: href
+                                });
+                                break;
+                            }
+                        }
+                    });
+                    return results;
+                """) or []
+
+                logger.info(f"JS extraction: {len(raw_results)} блоків до дедупу")
 
                 # Унікалізація: лише за URL (один aclk-URL = одна картка товару)
                 # Якщо URL порожній — падаємо на текст
@@ -123,6 +137,14 @@ class WebScraper:
                         seen.add(key)
                         unique_raw.append(r)
                 
+                print(f"\n{'='*60}")
+                print(f"[WEB SCRAPER] Запит: '{query}'")
+                print(f"[WEB SCRAPER] Зібрано унікальних блоків: {len(unique_raw)}")
+                for i, r in enumerate(unique_raw, 1):
+                    preview = r['raw_text'][:100].replace('\n', ' ')
+                    print(f"  {i:>3}. {preview}")
+                print(f"{'='*60}\n")
+
                 logger.info(f"✅ Collected {len(unique_raw)} raw blocks for AI.")
                 return unique_raw
 
