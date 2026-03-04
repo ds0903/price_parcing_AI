@@ -164,6 +164,7 @@ class RozetkaScraper:
     def _parse(self, html: str) -> list[dict]:
         soup = BeautifulSoup(html, "lxml")
         products = []
+        seen_urls: set[str] = set()
 
         cards = (
             soup.select("li.goods-tile")
@@ -227,6 +228,11 @@ class RozetkaScraper:
                 
                 # ID товару
                 product_id = card.get("data-goods-id") or ""
+
+                if url and url in seen_urls:
+                    continue
+                if url:
+                    seen_urls.add(url)
 
                 products.append({
                     "name": name,
