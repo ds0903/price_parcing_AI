@@ -715,9 +715,16 @@ async def handle_text(message: Message) -> None:
                 )
 
                 # Додаємо URL назад до розпарсених товарів (співставляємо за індексом)
+                # Дедублікація: не більше 1 товару від одного продавця
                 final_filtered = []
+                seen_sellers: set[str] = set()
                 for i, p in enumerate(parsed_products):
                     if i < len(raw_blocks_data) and p.get("match"):
+                        seller = p.get("seller", "").strip().lower()
+                        if seller and seller in seen_sellers:
+                            continue
+                        if seller:
+                            seen_sellers.add(seller)
                         p["url"] = raw_blocks_data[i]["url"]
                         p["platform"] = "google_shopping"
                         final_filtered.append(p)

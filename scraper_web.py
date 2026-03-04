@@ -116,12 +116,12 @@ class WebScraper:
                         })
                     except: continue
 
-                # Унікалізація за текстом та URL
+                # Унікалізація: лише за URL (один aclk-URL = одна картка товару)
+                # Якщо URL порожній — падаємо на текст
                 unique_raw = []
                 seen = set()
                 for r in raw_results:
-                    # Створюємо ключ з перших 50 символів тексту + URL
-                    key = f"{r['raw_text'][:50]}_{r['url']}"
+                    key = r['url'] if r['url'] else r['raw_text'][:80]
                     if key not in seen:
                         seen.add(key)
                         unique_raw.append(r)
