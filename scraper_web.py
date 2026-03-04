@@ -94,58 +94,84 @@ class WebScraper:
                 current_url = driver.current_url
                 logger.info(f"Extracting RAW text blocks | URL: {current_url[:120]}")
 
-                # JS-підхід: шукаємо зовнішні посилання і піднімаємось DOM-деревом
-                # до контейнера з ціною — не залежить від CSS-класів Google
+                # JS: два методи паралельно
+                # Метод 1 — напряму шукаємо leaf-елементи з ціною (грн/₴) і підіймаємось до картки
+                # Метод 2 — через посилання (запасний, як раніше)
                 raw_results = driver.execute_script("""
                     var results = [];
-                    var seen = new Set();
+                    var seenNorm = new Set();
+                    var PRICE_RE = /\\d[\\d\\s]*[,.]?\\d*\\s*(\\u0433\\u0440\\u043d|\\u20B4|UAH)/i;
 
+                    function tryAdd(el) {
+                        var text = (el.innerText || '').trim();
+                        if (!PRICE_RE.test(text) || text.length < 20 || text.length > 800) return false;
+                        var norm = text.replace(/[\\s\\W]+/g, '').slice(0, 60).toLowerCase();
+                        if (seenNorm.has(norm)) return true;
+                        seenNorm.add(norm);
+                        var link = el.querySelector('a[href]');
+                        var href = link ? (link.getAttribute('href') || '') : '';
+                        results.push({ raw_text: text.replace(/\\n/g, ' | '), url: href });
+                        return true;
+                    }
+
+                    // Метод 1: шукаємо всі текстові вузли з ціною → піднімаємось до картки
+                    document.querySelectorAll('*').forEach(function(el) {
+                        if (el.childElementCount > 0) return; // тільки leaf-елементи
+                        var own = (el.innerText || '').trim();
+                        if (!PRICE_RE.test(own) || own.length > 80) return;
+                        // Знайшли leaf з ціною — піднімаємось до контейнера
+                        var cur = el.parentElement;
+                        for (var i = 0; i < 10; i++) {
+                            if (!cur || cur === document.body) break;
+                            var t = (cur.innerText || '').trim();
+                            if (t.length >= 30 && t.length <= 800 && PRICE_RE.test(t)) {
+                                // Перевіряємо що це не занадто великий блок (вся сторінка)
+                                if (cur.childElementCount <= 30) { tryAdd(cur); break; }
+                            }
+                            cur = cur.parentElement;
+                        }
+                    });
+
+                    // Метод 2: через посилання (ловить те що метод 1 пропустив)
                     document.querySelectorAll('a[href]').forEach(function(a) {
                         var href = a.getAttribute('href') || '';
                         if (!href || href.startsWith('#') || href.startsWith('javascript')) return;
-                        if (href.indexOf('google.') !== -1 || href.indexOf('gstatic.') !== -1) return;
-                        if (seen.has(href)) return;
-
+                        if (href.indexOf('gstatic.') !== -1) return;
+                        if (href.indexOf('google.') !== -1 && href.indexOf('/shopping/product') === -1) return;
                         var el = a;
-                        for (var depth = 0; depth < 8; depth++) {
+                        for (var d = 0; d < 8; d++) {
                             el = el.parentElement;
-                            if (!el) break;
-                            var text = (el.innerText || '').trim();
-                            if (/\\d+[\\s,.]?\\d*\\s*(грн|\\u20B4|UAH)/.test(text)
-                                    && text.length > 15 && text.length < 700) {
-                                seen.add(href);
-                                results.push({
-                                    raw_text: text.replace(/\\n/g, ' | '),
-                                    url: href
-                                });
-                                break;
+                            if (!el || el === document.body) break;
+                            var t = (el.innerText || '').trim();
+                            if (PRICE_RE.test(t) && t.length >= 20 && t.length <= 800) {
+                                tryAdd(el); break;
                             }
                         }
                     });
+
                     return results;
                 """) or []
 
                 logger.info(f"JS extraction: {len(raw_results)} блоків до дедупу")
 
-                # Унікалізація: лише за URL (один aclk-URL = одна картка товару)
-                # Якщо URL порожній — падаємо на текст
+                # Python дедуп (на випадок якщо JS не добив усі дублікати)
                 unique_raw = []
-                seen = set()
+                seen_py = set()
                 for r in raw_results:
-                    key = r['url'] if r['url'] else r['raw_text'][:80]
-                    if key not in seen:
-                        seen.add(key)
+                    norm = re.sub(r'[\s\W]+', '', r['raw_text'])[:60].lower()
+                    key = norm if norm else r['url']
+                    if key not in seen_py:
+                        seen_py.add(key)
                         unique_raw.append(r)
                 
+                logger.info(f"✅ RAW: {len(raw_results)} блоків → після дедупу: {len(unique_raw)} унікальних")
                 print(f"\n{'='*60}")
                 print(f"[WEB SCRAPER] Запит: '{query}'")
-                print(f"[WEB SCRAPER] Зібрано унікальних блоків: {len(unique_raw)}")
+                print(f"[WEB SCRAPER] RAW: {len(raw_results)} | Унікальних: {len(unique_raw)}")
                 for i, r in enumerate(unique_raw, 1):
-                    preview = r['raw_text'][:100].replace('\n', ' ')
+                    preview = r['raw_text'][:120].replace('\n', ' ')
                     print(f"  {i:>3}. {preview}")
                 print(f"{'='*60}\n")
-
-                logger.info(f"✅ Collected {len(unique_raw)} raw blocks for AI.")
                 return unique_raw
 
             finally:
