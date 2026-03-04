@@ -41,20 +41,32 @@ class WebScraper:
             options.add_argument(f"--user-data-dir={user_data_dir}")
             options.add_argument("--disable-notifications")
             options.add_argument("--lang=uk-UA")
-            # Google Shopping детектує headless і блокує → завжди видимий браузер
-            options.add_argument("--start-maximized")
-            
+            # Google Shopping — завжди видимий браузер (headless блокується Google)
+            options.add_argument("--window-size=1366,768")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+
             if PROXY_ENABLED and PROXY_URL:
                 from urllib.parse import urlparse
                 parsed = urlparse(PROXY_URL)
                 options.add_argument(f'--proxy-server={parsed.hostname}:{parsed.port}')
 
-            import subprocess
+            import subprocess, platform as _platform
             def get_chrome_version():
                 try:
-                    cmd = 'reg query "HKEY_CURRENT_USER\\Software\\Google\\Chrome\\BLBeacon" /v version'
-                    output = subprocess.check_output(cmd, shell=True).decode()
-                    return int(re.search(r'(\d+)\.', output).group(1))
+                    if _platform.system() == "Windows":
+                        cmd = 'reg query "HKEY_CURRENT_USER\\Software\\Google\\Chrome\\BLBeacon" /v version'
+                        out = subprocess.check_output(cmd, shell=True).decode()
+                    else:
+                        for binary in ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium"):
+                            try:
+                                out = subprocess.check_output([binary, "--version"], stderr=subprocess.DEVNULL).decode()
+                                break
+                            except FileNotFoundError:
+                                continue
+                        else:
+                            return None
+                    return int(re.search(r'(\d+)\.', out).group(1))
                 except: return None
 
             driver = uc.Chrome(options=options, use_subprocess=True, version_main=get_chrome_version())

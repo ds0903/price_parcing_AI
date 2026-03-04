@@ -67,7 +67,7 @@ def settings_keyboard(platforms: list[str]) -> InlineKeyboardMarkup:
             text=("✅ " if p in platforms else "◻️ ") + label,
             callback_data=f"platform:{p}",
         )
-        for p, label in [("prom", "Prom"), ("olx", "OLX"), ("rozetka", "Rozetka")]
+        for p, label in [("prom", "Prom"), ("rozetka", "Rozetka")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=[row])
 
@@ -582,13 +582,18 @@ async def handle_text(message: Message) -> None:
     # ------------------------------------------------------------------ #
     if action == "platform_switch":
         platform = (intent.get("platforms") or [""])[0]
-        if platform in ("prom", "olx", "rozetka"):
+        if platform == "olx":
+            await message.answer(
+                "⛔ OLX наразі недоступний. Оберіть іншу платформу:",
+                reply_markup=settings_keyboard(settings["platforms"]),
+            )
+        elif platform in ("prom", "rozetka"):
             await save_user_settings(user_id, platforms=[platform])
             label = PLATFORM_LABELS.get(platform, platform)
             await message.answer(f"✅ Платформу змінено на {label}")
         else:
             await message.answer(
-                "❓ Не розпізнав платформу. Доступні: Prom, OLX, Rozetka",
+                "❓ Не розпізнав платформу. Доступні: Prom, Rozetka",
                 reply_markup=settings_keyboard(settings["platforms"]),
             )
         return
