@@ -6,14 +6,12 @@ import re
 from scraper_prom import PromScraper
 from scraper_olx import OLXScraper
 from scraper_web import WebScraper
-from scraper_rozetka import RozetkaScraper
-
 # Platform keyword detection
 _PLATFORM_KEYWORDS: dict[str, list[str]] = {
     "prom":    ["prom", "prom.ua", "пром", "промюа"],
     "olx":     ["olx", "олх", "олекс", "олх.юа"],
     # "web": вимкнено
-    "rozetka": ["rozetka", "розетка", "rozetka.ua", "розетка.юа"],
+    # "rozetka": вимкнено
 }
 
 # Words to strip when cleaning the query (only command words, NOT natural language)
@@ -29,7 +27,6 @@ _ALL_STRIP = _STRIP_WORDS | {kw for kws in _PLATFORM_KEYWORDS.values() for kw in
 PLATFORM_LABELS = {
     "prom":    "Prom.ua 🛒",
     "olx":     "OLX 📦",
-    "rozetka": "Rozetka 🔴",
     "web":     "Інтернет 🌐",
 }
 
@@ -55,7 +52,6 @@ class SearchManager:
         self._scrapers = {
             "prom":    PromScraper(),
             "olx":     OLXScraper(),
-            "rozetka": RozetkaScraper(),
             "web":     WebScraper(),
         }
 

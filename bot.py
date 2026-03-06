@@ -67,7 +67,7 @@ def settings_keyboard(platforms: list[str]) -> InlineKeyboardMarkup:
             text=("✅ " if p in platforms else "◻️ ") + label,
             callback_data=f"platform:{p}",
         )
-        for p, label in [("prom", "Prom"), ("rozetka", "Rozetka")]
+        for p, label in [("prom", "Prom")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=[row])
 
@@ -120,8 +120,8 @@ def build_excel(query: str, platform: str, products: list[dict], ai_analysis: st
     ws = wb.active
     ws.title = "Результати"
 
-    show_seller = platform not in ("olx", "rozetka")
-    show_city   = platform != "rozetka"
+    show_seller = platform not in ("olx",)
+    show_city   = True
     if show_seller and show_city:
         col_widths = [5, 60, 28, 28, 22, 28, 16]
         headers    = ["№", "Назва", "Ціна", "Продавець", "Місто", "Посилання", "Платформа"]
@@ -586,13 +586,13 @@ async def handle_text(message: Message) -> None:
                 "⛔ OLX наразі недоступний. Оберіть іншу платформу:",
                 reply_markup=settings_keyboard(settings["platforms"]),
             )
-        elif platform in ("prom", "rozetka"):
+        elif platform == "prom":
             await save_user_settings(user_id, platforms=[platform])
             label = PLATFORM_LABELS.get(platform, platform)
             await message.answer(f"✅ Платформу змінено на {label}")
         else:
             await message.answer(
-                "❓ Не розпізнав платформу. Доступні: Prom, Rozetka",
+                "❓ Не розпізнав платформу. Доступна: Prom",
                 reply_markup=settings_keyboard(settings["platforms"]),
             )
         return
@@ -666,8 +666,9 @@ async def handle_text(message: Message) -> None:
     if action == "schedule_set":
         query = intent.get("query", "").strip()
         interval = intent.get("interval_minutes")
-        detected = intent.get("platforms") or []
-        platforms = detected if detected else settings["platforms"]
+        detected = [p for p in (intent.get("platforms") or []) if p != "rozetka"]
+        user_platforms = [p for p in settings["platforms"] if p != "rozetka"]
+        platforms = detected if detected else (user_platforms or ["prom"])
 
         if not query or not interval:
             await message.answer(
@@ -791,8 +792,9 @@ async def handle_text(message: Message) -> None:
     # ------------------------------------------------------------------ #
     if action == "search":
         query = intent.get("query", "").strip()
-        detected = intent.get("platforms") or []
-        platforms = detected if detected else settings["platforms"]
+        detected = [p for p in (intent.get("platforms") or []) if p != "rozetka"]
+        user_platforms = [p for p in settings["platforms"] if p != "rozetka"]
+        platforms = detected if detected else (user_platforms or ["prom"])
         filters = intent.get("filters") or {}
 
         if not query:
