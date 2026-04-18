@@ -13,4 +13,4 @@ camoufox[geoip]
 undetected-chromedriver
 selenium
 setuptools
-#todo наче працює але терба буден більш точн опідлашутвати фліьтир бо деякі твоари прпосукаємо все таки нажаль
+google.generativeai
